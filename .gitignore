@@ -51,3 +51,5 @@ wheels/
 .pytest_cache/
 .coverage
 htmlcov/
+
+commenter_types.json

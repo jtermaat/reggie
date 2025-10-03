@@ -18,6 +18,10 @@ from typing import List, Dict, Optional
 from dataclasses import dataclass
 import argparse
 from openai import OpenAI
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
 
 
 @dataclass
@@ -48,9 +52,9 @@ class RegulationsAPIClient:
         return data.get("data", [])
     
     def get_comments_for_document(
-        self, 
-        object_id: str, 
-        page_number: int = 1, 
+        self,
+        object_id: str,
+        page_number: int = 1,
         page_size: int = 250
     ) -> Dict:
         """Get comments for a specific document."""
@@ -58,11 +62,18 @@ class RegulationsAPIClient:
         params = {
             "filter[commentOnId]": object_id,
             "page[size]": page_size,
-            "page[number]": page_number,
-            "sort": "lastModifiedDate,documentId"
+            "page[number]": page_number
         }
-        
+
         response = self.session.get(url, params=params)
+        response.raise_for_status()
+        return response.json()
+
+    def get_comment_details(self, comment_id: str) -> Dict:
+        """Get detailed information for a specific comment."""
+        url = f"{self.BASE_URL}/comments/{comment_id}"
+
+        response = self.session.get(url)
         response.raise_for_status()
         return response.json()
     
@@ -89,7 +100,7 @@ class RegulationsAPIClient:
                 continue
             
             print(f"Checking comments for document {doc['id']}...")
-            response = self.get_comments_for_document(object_id, page_number=1, page_size=1)
+            response = self.get_comments_for_document(object_id, page_number=1, page_size=5)
             
             total_comments = response.get("meta", {}).get("totalElements", 0)
             if total_comments > 0:
@@ -166,7 +177,7 @@ class CommenterTypeExtractor:
         self.client = OpenAI(api_key=openai_api_key)
     
     def extract_commenter_type(self, comment_text: str) -> CommenterInfo:
-        """Extract commenter type from a comment using GPT-4o-mini with few-shot prompting."""
+        """Extract commenter type from a comment using GPT-5-mini with few-shot prompting."""
         
         # Build few-shot prompt
         examples_text = "\n\n".join([
@@ -174,34 +185,23 @@ class CommenterTypeExtractor:
             for ex in self.FEW_SHOT_EXAMPLES
         ])
         
-        prompt = f"""You are analyzing public comments on healthcare regulations. Extract ONLY the professional role, credentials, or organizational affiliation of the commenter. Focus on what type of stakeholder they are.
+        prompt = f"""You are analyzing public comments on healthcare regulations. Extract only a description of the commenter.
 
 Examples:
 {examples_text}
 
-Now extract the commenter type from this comment:
-Comment: "{comment_text[:500]}"
-
-Instructions:
-- Extract ONLY who/what the commenter is (their role, profession, or organization type)
-- Be specific about medical specialties when mentioned
-- Distinguish between individuals, organizations, and advocacy groups
-- If multiple roles mentioned, pick the most relevant to healthcare
-- If no clear role is stated, write "Individual (Role Unspecified)"
-- Keep your response under 10 words
-- Do not include any other text, just the commenter type
+Now extract the commenter description from this comment:
+Comment: "{comment_text}"
 
 Commenter Type:"""
 
         try:
             response = self.client.chat.completions.create(
-                model="gpt-4o-mini",
+                model="gpt-5-mini",
                 messages=[
                     {"role": "system", "content": "You extract commenter types from regulatory comments. Respond with ONLY the commenter type, nothing else."},
                     {"role": "user", "content": prompt}
-                ],
-                temperature=0,
-                max_tokens=30
+                ]
             )
             
             commenter_type = response.choices[0].message.content.strip()
@@ -212,40 +212,50 @@ Commenter Type:"""
             print(f"Error extracting commenter type: {e}")
             return "Error - Unable to Extract"
     
-    def extract_batch(self, comments: List[Dict]) -> List[CommenterInfo]:
+    def extract_batch(self, comments: List[Dict], regs_client) -> List[CommenterInfo]:
         """Extract commenter types from a batch of comments."""
         results = []
-        
+
         for i, comment in enumerate(comments):
             comment_id = comment.get("id", "unknown")
-            attributes = comment.get("attributes", {})
-            
+
+            print(f"Processing comment {i+1}/{len(comments)} ({comment_id})...")
+            print(f"  Fetching full comment details...")
+
+            # Fetch the full comment details to get complete information
+            try:
+                comment_details = regs_client.get_comment_details(comment_id)
+                attributes = comment_details.get("data", {}).get("attributes", {})
+            except Exception as e:
+                print(f"  Error fetching comment details: {e}")
+                attributes = comment.get("attributes", {})
+
             # Get comment text
             comment_text = attributes.get("comment", "")
-            
+
             # Try to get organization/name from metadata
             first_name = attributes.get("firstName", "")
             last_name = attributes.get("lastName", "")
             organization = attributes.get("organization", "")
-            
+
             # Build context
             full_text = f"{organization}. {first_name} {last_name}. {comment_text}"
-            
-            print(f"Processing comment {i+1}/{len(comments)} ({comment_id})...")
-            
+
+            print(f"  Comment preview: {full_text[:150]}...")
+
             commenter_type = self.extract_commenter_type(full_text)
-            
+
             info = CommenterInfo(
                 comment_id=comment_id,
                 commenter_type=commenter_type,
                 confidence="high" if any(keyword in full_text.lower()[:200] for keyword in ["i am a", "as a", "our organization"]) else "medium",
-                raw_comment_snippet=full_text[:200]
+                raw_comment_snippet=full_text[:100]
             )
-            
+
             results.append(info)
-            
-            time.sleep(0.2)  # Rate limiting for OpenAI
-        
+
+            time.sleep(0.2)  # Rate limiting for OpenAI and regulations.gov
+
         return results
 
 
@@ -281,10 +291,10 @@ def main():
     
     # Extract commenter types
     print(f"\n{'='*60}")
-    print(f"Extracting commenter types using GPT-4o-mini")
+    print(f"Extracting commenter types using GPT-5-mini")
     print(f"{'='*60}\n")
-    
-    results = extractor.extract_batch(comments)
+
+    results = extractor.extract_batch(comments, regs_client)
     
     # Save results
     output_data = {
