@@ -15,21 +15,12 @@ import time
 import random
 import os
 from typing import List, Dict, Optional
-from dataclasses import dataclass
 import argparse
 from openai import OpenAI
 from dotenv import load_dotenv
 
 # Load environment variables from .env file
 load_dotenv()
-
-
-@dataclass
-class CommenterInfo:
-    comment_id: str
-    commenter_type: str
-    confidence: str
-    raw_comment_snippet: str
 
 
 class RegulationsAPIClient:
@@ -176,8 +167,8 @@ class CommenterTypeExtractor:
     def __init__(self, openai_api_key: Optional[str] = None):
         self.client = OpenAI(api_key=openai_api_key)
     
-    def extract_commenter_type(self, comment_text: str) -> CommenterInfo:
-        """Extract commenter type from a comment using GPT-5-mini with few-shot prompting."""
+    def extract_commenter_type(self, comment_text: str) -> str:
+        """Extract commenter type from a comment using GPT-5-nano with few-shot prompting."""
         
         # Build few-shot prompt
         examples_text = "\n\n".join([
@@ -197,7 +188,7 @@ Commenter Type:"""
 
         try:
             response = self.client.chat.completions.create(
-                model="gpt-5-mini",
+                model="gpt-5-nano",
                 messages=[
                     {"role": "system", "content": "You extract commenter types from regulatory comments. Respond with ONLY the commenter type, nothing else."},
                     {"role": "user", "content": prompt}
@@ -212,7 +203,7 @@ Commenter Type:"""
             print(f"Error extracting commenter type: {e}")
             return "Error - Unable to Extract"
     
-    def extract_batch(self, comments: List[Dict], regs_client) -> List[CommenterInfo]:
+    def extract_batch(self, comments: List[Dict], regs_client) -> List[str]:
         """Extract commenter types from a batch of comments."""
         results = []
 
@@ -245,14 +236,7 @@ Commenter Type:"""
 
             commenter_type = self.extract_commenter_type(full_text)
 
-            info = CommenterInfo(
-                comment_id=comment_id,
-                commenter_type=commenter_type,
-                confidence="high" if any(keyword in full_text.lower()[:200] for keyword in ["i am a", "as a", "our organization"]) else "medium",
-                raw_comment_snippet=full_text[:100]
-            )
-
-            results.append(info)
+            results.append(commenter_type)
 
             time.sleep(0.2)  # Rate limiting for OpenAI and regulations.gov
 
@@ -291,26 +275,23 @@ def main():
     
     # Extract commenter types
     print(f"\n{'='*60}")
-    print(f"Extracting commenter types using GPT-5-mini")
+    print(f"Extracting commenter types using GPT-5-nano")
     print(f"{'='*60}\n")
 
     results = extractor.extract_batch(comments, regs_client)
-    
+
+    # Delete old output file if it exists
+    if os.path.exists(args.output):
+        os.remove(args.output)
+        print(f"\nDeleted old output file: {args.output}")
+
     # Save results
     output_data = {
         "docket_id": args.docket_id,
         "sample_size": len(results),
-        "commenter_types": [
-            {
-                "comment_id": r.comment_id,
-                "commenter_type": r.commenter_type,
-                "confidence": r.confidence,
-                "snippet": r.raw_comment_snippet
-            }
-            for r in results
-        ]
+        "commenter_types": results
     }
-    
+
     with open(args.output, "w") as f:
         json.dump(output_data, f, indent=2)
     
@@ -320,8 +301,8 @@ def main():
     print(f"{'='*60}\n")
     
     from collections import Counter
-    type_counts = Counter(r.commenter_type for r in results)
-    
+    type_counts = Counter(results)
+
     print(f"Total comments analyzed: {len(results)}")
     print(f"\nTop 20 commenter types:")
     for commenter_type, count in type_counts.most_common(20):
