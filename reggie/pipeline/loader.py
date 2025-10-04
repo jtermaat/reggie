@@ -6,6 +6,7 @@ from typing import Optional
 from datetime import datetime
 
 import psycopg
+from psycopg.types.json import Json
 from langsmith import traceable
 
 from ..api import RegulationsAPIClient
@@ -67,7 +68,7 @@ class DocumentLoader:
                     attrs.get("docketId"),
                     attrs.get("documentType"),
                     attrs.get("postedDate"),
-                    attrs,
+                    Json(attrs),
                 ),
             )
 
@@ -114,7 +115,7 @@ class DocumentLoader:
                     attrs.get("lastName"),
                     attrs.get("organization"),
                     attrs.get("postedDate"),
-                    attrs,
+                    Json(attrs),
                 ),
             )
 

@@ -1,1 +1,1 @@
-Do not ever read .env
+Never read .env
