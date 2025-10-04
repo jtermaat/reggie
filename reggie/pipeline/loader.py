@@ -152,6 +152,72 @@ class DocumentLoader:
                     (comment_id, chunk_text, idx, embedding),
                 )
 
+    async def _process_and_store_batch(
+        self,
+        comments: list,
+        document_id: str,
+        conn,
+        stats: dict,
+    ) -> None:
+        """Process and store a batch of comments (categorize, embed, store).
+
+        Args:
+            comments: List of comment details from API
+            document_id: Parent document ID
+            conn: Database connection
+            stats: Statistics dictionary to update
+        """
+        # Prepare comment data for processing
+        comment_data_list = []
+        for comment in comments:
+            attrs = comment.get("attributes", {})
+            comment_data_list.append({
+                "id": comment.get("id"),
+                "comment_text": attrs.get("comment", ""),
+                "first_name": attrs.get("firstName"),
+                "last_name": attrs.get("lastName"),
+                "organization": attrs.get("organization"),
+            })
+
+        # Categorize the batch
+        classifications = await self.categorizer.categorize_batch(
+            comment_data_list, batch_size=len(comment_data_list)
+        )
+
+        # Chunk and embed the batch
+        all_chunks = await self.embedder.process_comments_batch(
+            comment_data_list, batch_size=len(comment_data_list)
+        )
+
+        # Store each comment with its classification and embeddings
+        for i, comment in enumerate(comments):
+            try:
+                classification = classifications[i]
+                chunks_with_embeddings = all_chunks[i]
+
+                # Store comment with classification
+                await self._store_comment(
+                    comment,
+                    document_id,
+                    classification.category.value,
+                    classification.sentiment.value,
+                    conn,
+                )
+
+                # Store chunks and embeddings
+                await self._store_comment_chunks(
+                    comment.get("id"),
+                    chunks_with_embeddings,
+                    conn,
+                )
+
+                stats["comments_processed"] += 1
+                stats["chunks_created"] += len(chunks_with_embeddings)
+
+            except Exception as e:
+                logger.error(f"Error processing comment {comment.get('id')}: {e}")
+                stats["errors"] += 1
+
     @traceable(name="load_document")
     async def load_document(
         self,
@@ -204,81 +270,43 @@ class DocumentLoader:
                 await self._store_document(document_data, conn)
                 logger.info(f"Stored document metadata for {document_id}")
 
-                # 2. Fetch all comment details
-                logger.info("Fetching comments...")
-                comments = []
+                # 2. Process comments incrementally as they are fetched
+                logger.info("Starting incremental comment processing...")
+
+                comment_batch = []
+                total_comments_fetched = 0
+
                 async for comment_detail in self.api_client.get_all_comment_details(
                     object_id, batch_size=batch_size
                 ):
-                    comments.append(comment_detail)
+                    comment_batch.append(comment_detail)
+                    total_comments_fetched += 1
 
-                logger.info(f"Fetched {len(comments)} comments")
+                    # Process batch when it reaches desired size
+                    if len(comment_batch) >= batch_size:
+                        await self._process_and_store_batch(
+                            comment_batch, document_id, conn, stats
+                        )
+                        logger.info(
+                            f"Processed {total_comments_fetched} comments "
+                            f"({stats['chunks_created']} chunks total)"
+                        )
+                        comment_batch = []
 
-                if not comments:
+                # Process any remaining comments
+                if comment_batch:
+                    await self._process_and_store_batch(
+                        comment_batch, document_id, conn, stats
+                    )
+                    logger.info(
+                        f"Processed {total_comments_fetched} comments total "
+                        f"({stats['chunks_created']} chunks total)"
+                    )
+
+                if total_comments_fetched == 0:
                     logger.warning(f"No comments found for document {document_id}")
                     await conn.commit()
                     return stats
-
-                # 3. Prepare comment data for processing
-                comment_data_list = []
-                for comment in comments:
-                    attrs = comment.get("attributes", {})
-                    comment_data_list.append({
-                        "id": comment.get("id"),
-                        "comment_text": attrs.get("comment", ""),
-                        "first_name": attrs.get("firstName"),
-                        "last_name": attrs.get("lastName"),
-                        "organization": attrs.get("organization"),
-                    })
-
-                # 4. Categorize comments in batches
-                logger.info("Categorizing comments...")
-                classifications = await self.categorizer.categorize_batch(
-                    comment_data_list, batch_size=batch_size
-                )
-
-                # 5. Chunk and embed comments in batches
-                logger.info("Chunking and embedding comments...")
-                all_chunks = await self.embedder.process_comments_batch(
-                    comment_data_list, batch_size=batch_size
-                )
-
-                # 6. Store everything in database
-                logger.info("Storing data in database...")
-                for i, comment in enumerate(comments):
-                    try:
-                        classification = classifications[i]
-                        chunks_with_embeddings = all_chunks[i]
-
-                        # Store comment with classification
-                        await self._store_comment(
-                            comment,
-                            document_id,
-                            classification.category.value,
-                            classification.sentiment.value,
-                            conn,
-                        )
-
-                        # Store chunks and embeddings
-                        await self._store_comment_chunks(
-                            comment.get("id"),
-                            chunks_with_embeddings,
-                            conn,
-                        )
-
-                        stats["comments_processed"] += 1
-                        stats["chunks_created"] += len(chunks_with_embeddings)
-
-                        # Periodic progress logging
-                        if (i + 1) % 10 == 0:
-                            logger.info(
-                                f"Stored {i + 1}/{len(comments)} comments "
-                                f"({stats['chunks_created']} chunks)"
-                            )
-
-                    except Exception as e:
-                        logger.error(f"Error storing comment {i}: {e}")
-                        stats["errors"] += 1
 
                 # Commit transaction
                 await conn.commit()
