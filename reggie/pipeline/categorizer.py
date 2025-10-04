@@ -91,8 +91,7 @@ Provide your classification along with brief reasoning."""
         # Initialize LangChain model with structured output
         base_model = ChatOpenAI(
             model="gpt-5-nano",
-            api_key=api_key,
-            temperature=0,
+            api_key=api_key
         )
 
         # Bind structured output schema

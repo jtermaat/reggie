@@ -21,7 +21,7 @@ class RegulationsAPIClient:
         """Initialize the API client.
 
         Args:
-            api_key: API key for regulations.gov. If None, reads from REG_API_KEY env var.
+            api_key: API key for regulations.gov.
         """
         self.api_key = api_key or os.getenv("REG_API_KEY", "DEMO_KEY")
         self.client = httpx.AsyncClient(

@@ -53,3 +53,7 @@ wheels/
 htmlcov/
 
 commenter_types.json
+
+#repomix
+repomix-output.xml
+repomix-output.txt
