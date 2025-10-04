@@ -12,7 +12,7 @@ from rich.table import Table
 from rich.progress import Progress, SpinnerColumn, TextColumn
 
 from ..db import init_db
-from ..pipeline import DocumentLoader
+from ..pipeline import DocumentLoader, CommentProcessor
 
 # Load environment variables
 load_dotenv()
@@ -104,6 +104,66 @@ def load(document_id: str, batch_size: int):
 
         console.print("\n[bold green]✓[/bold green] Document loaded successfully!\n")
         console.print("[bold]Statistics:[/bold]")
+        console.print(f"  • Comments loaded: {stats['comments_processed']}")
+        console.print(f"  • Errors: {stats['errors']}")
+        console.print(f"  • Duration: {stats['duration']:.1f}s")
+        console.print("\n[dim]Note: Comments are stored but not yet categorized or embedded.[/dim]")
+        console.print("[dim]Use 'reggie process <document_id>' to categorize and embed comments.[/dim]")
+
+    except Exception as e:
+        console.print(f"\n[red]Error:[/red] {e}")
+        logging.exception("Error loading document")
+        return
+
+
+@cli.command()
+@click.argument("document_id")
+@click.option(
+    "--batch-size",
+    default=10,
+    help="Number of comments to process in parallel (default: 10)",
+)
+def process(document_id: str, batch_size: int):
+    """Process comments: categorize and embed.
+
+    DOCUMENT_ID: The document ID (e.g., CMS-2025-0304-0009)
+
+    This processes comments that have already been loaded with 'reggie load'.
+
+    Example:
+        reggie process CMS-2025-0304-0009
+    """
+    # Verify required environment variables
+    required_vars = ["OPENAI_API_KEY"]
+    missing = [var for var in required_vars if not os.getenv(var)]
+
+    if missing:
+        console.print(
+            f"[red]Error: Missing required environment variables: {', '.join(missing)}[/red]"
+        )
+        console.print("\nPlease set the following environment variables:")
+        for var in missing:
+            console.print(f"  - {var}")
+        return
+
+    async def _process():
+        processor = CommentProcessor()
+        stats = await processor.process_comments(document_id, batch_size=batch_size)
+        return stats
+
+    console.print(f"\n[bold]Processing comments for:[/bold] {document_id}\n")
+
+    try:
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[progress.description]{task.description}"),
+            console=console,
+        ) as progress:
+            task = progress.add_task("Processing...", total=None)
+            stats = asyncio.run(_process())
+
+        console.print("\n[bold green]✓[/bold green] Comments processed successfully!\n")
+        console.print("[bold]Statistics:[/bold]")
         console.print(f"  • Comments processed: {stats['comments_processed']}")
         console.print(f"  • Chunks created: {stats['chunks_created']}")
         console.print(f"  • Errors: {stats['errors']}")
@@ -111,7 +171,7 @@ def load(document_id: str, batch_size: int):
 
     except Exception as e:
         console.print(f"\n[red]Error:[/red] {e}")
-        logging.exception("Error loading document")
+        logging.exception("Error processing comments")
         return
 
 

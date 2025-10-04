@@ -10,8 +10,6 @@ from psycopg.types.json import Json
 from langsmith import traceable
 
 from ..api import RegulationsAPIClient
-from .categorizer import CommentCategorizer
-from .embedder import CommentEmbedder
 from ..db import get_connection_string
 from ..config import setup_langsmith
 
@@ -24,19 +22,15 @@ class DocumentLoader:
     def __init__(
         self,
         reg_api_key: Optional[str] = None,
-        openai_api_key: Optional[str] = None,
         connection_string: Optional[str] = None,
     ):
         """Initialize the document loader.
 
         Args:
             reg_api_key: Regulations.gov API key
-            openai_api_key: OpenAI API key
             connection_string: PostgreSQL connection string
         """
         self.api_client = RegulationsAPIClient(api_key=reg_api_key)
-        self.categorizer = CommentCategorizer(openai_api_key=openai_api_key)
-        self.embedder = CommentEmbedder(openai_api_key=openai_api_key)
         self.connection_string = connection_string or get_connection_string()
 
     async def _store_document(self, document_data: dict, conn) -> None:
@@ -76,17 +70,17 @@ class DocumentLoader:
         self,
         comment_data: dict,
         document_id: str,
-        category: str,
-        sentiment: str,
-        conn,
+        category: str = None,
+        sentiment: str = None,
+        conn = None,
     ) -> None:
         """Store comment in database.
 
         Args:
             comment_data: Comment data from API
             document_id: Parent document ID
-            category: Classified category
-            sentiment: Classified sentiment
+            category: Classified category (optional)
+            sentiment: Classified sentiment (optional)
             conn: Database connection
         """
         attrs = comment_data.get("attributes", {})
@@ -100,8 +94,9 @@ class DocumentLoader:
                 )
                 VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 ON CONFLICT (id) DO UPDATE SET
-                    category = EXCLUDED.category,
-                    sentiment = EXCLUDED.sentiment,
+                    comment_text = EXCLUDED.comment_text,
+                    category = COALESCE(EXCLUDED.category, comments.category),
+                    sentiment = COALESCE(EXCLUDED.sentiment, comments.sentiment),
                     metadata = EXCLUDED.metadata,
                     updated_at = NOW()
                 """,
@@ -119,47 +114,14 @@ class DocumentLoader:
                 ),
             )
 
-    async def _store_comment_chunks(
-        self,
-        comment_id: str,
-        chunks_with_embeddings: list,
-        conn,
-    ) -> None:
-        """Store comment chunks and embeddings in database.
-
-        Args:
-            comment_id: Comment ID
-            chunks_with_embeddings: List of (chunk_text, embedding) tuples
-            conn: Database connection
-        """
-        if not chunks_with_embeddings:
-            return
-
-        async with conn.cursor() as cur:
-            # Delete existing chunks for this comment
-            await cur.execute(
-                "DELETE FROM comment_chunks WHERE comment_id = %s",
-                (comment_id,)
-            )
-
-            # Insert new chunks
-            for idx, (chunk_text, embedding) in enumerate(chunks_with_embeddings):
-                await cur.execute(
-                    """
-                    INSERT INTO comment_chunks (comment_id, chunk_text, chunk_index, embedding)
-                    VALUES (%s, %s, %s, %s)
-                    """,
-                    (comment_id, chunk_text, idx, embedding),
-                )
-
-    async def _process_and_store_batch(
+    async def _store_batch(
         self,
         comments: list,
         document_id: str,
         conn,
         stats: dict,
     ) -> None:
-        """Process and store a batch of comments (categorize, embed, store).
+        """Store a batch of raw comments without processing.
 
         Args:
             comments: List of comment details from API
@@ -167,55 +129,22 @@ class DocumentLoader:
             conn: Database connection
             stats: Statistics dictionary to update
         """
-        # Prepare comment data for processing
-        comment_data_list = []
+        # Store each comment
         for comment in comments:
-            attrs = comment.get("attributes", {})
-            comment_data_list.append({
-                "id": comment.get("id"),
-                "comment_text": attrs.get("comment", ""),
-                "first_name": attrs.get("firstName"),
-                "last_name": attrs.get("lastName"),
-                "organization": attrs.get("organization"),
-            })
-
-        # Categorize the batch
-        classifications = await self.categorizer.categorize_batch(
-            comment_data_list, batch_size=len(comment_data_list)
-        )
-
-        # Chunk and embed the batch
-        all_chunks = await self.embedder.process_comments_batch(
-            comment_data_list, batch_size=len(comment_data_list)
-        )
-
-        # Store each comment with its classification and embeddings
-        for i, comment in enumerate(comments):
             try:
-                classification = classifications[i]
-                chunks_with_embeddings = all_chunks[i]
-
-                # Store comment with classification
+                # Store comment without classification or embeddings
                 await self._store_comment(
                     comment,
                     document_id,
-                    classification.category.value,
-                    classification.sentiment.value,
-                    conn,
-                )
-
-                # Store chunks and embeddings
-                await self._store_comment_chunks(
-                    comment.get("id"),
-                    chunks_with_embeddings,
-                    conn,
+                    category=None,
+                    sentiment=None,
+                    conn=conn,
                 )
 
                 stats["comments_processed"] += 1
-                stats["chunks_created"] += len(chunks_with_embeddings)
 
             except Exception as e:
-                logger.error(f"Error processing comment {comment.get('id')}: {e}")
+                logger.error(f"Error storing comment {comment.get('id')}: {e}")
                 stats["errors"] += 1
 
     @traceable(name="load_document")
@@ -226,16 +155,14 @@ class DocumentLoader:
     ) -> dict:
         """Load a document and all its comments into the database.
 
-        This orchestrates the entire pipeline:
-        1. Fetch document metadata
-        2. Fetch all comments
-        3. Categorize comments (sentiment + category)
-        4. Chunk and embed comments
-        5. Store everything in PostgreSQL
+        This fetches document metadata and raw comments from the API
+        and stores them in the database. Comments are NOT processed
+        (categorized/embedded) during this stage - use process_comments()
+        for that.
 
         Args:
             document_id: Document ID (e.g., "CMS-2025-0304-0009")
-            batch_size: Number of comments to process in parallel
+            batch_size: Number of comments to fetch in parallel
 
         Returns:
             Statistics about the loading process
@@ -245,7 +172,6 @@ class DocumentLoader:
         stats = {
             "document_id": document_id,
             "comments_processed": 0,
-            "chunks_created": 0,
             "errors": 0,
             "start_time": datetime.now(),
         }
@@ -270,8 +196,8 @@ class DocumentLoader:
                 await self._store_document(document_data, conn)
                 logger.info(f"Stored document metadata for {document_id}")
 
-                # 2. Process comments incrementally as they are fetched
-                logger.info("Starting incremental comment processing...")
+                # 2. Fetch and store comments incrementally
+                logger.info("Starting incremental comment loading...")
 
                 comment_batch = []
                 total_comments_fetched = 0
@@ -282,25 +208,28 @@ class DocumentLoader:
                     comment_batch.append(comment_detail)
                     total_comments_fetched += 1
 
-                    # Process batch when it reaches desired size
+                    # Store batch when it reaches desired size
                     if len(comment_batch) >= batch_size:
-                        await self._process_and_store_batch(
+                        await self._store_batch(
                             comment_batch, document_id, conn, stats
                         )
+                        # Commit after each batch so data is immediately visible
+                        await conn.commit()
                         logger.info(
-                            f"Processed {total_comments_fetched} comments "
-                            f"({stats['chunks_created']} chunks total)"
+                            f"Stored {total_comments_fetched} comments "
+                            f"(committed to database)"
                         )
                         comment_batch = []
 
-                # Process any remaining comments
+                # Store any remaining comments
                 if comment_batch:
-                    await self._process_and_store_batch(
+                    await self._store_batch(
                         comment_batch, document_id, conn, stats
                     )
+                    await conn.commit()
                     logger.info(
-                        f"Processed {total_comments_fetched} comments total "
-                        f"({stats['chunks_created']} chunks total)"
+                        f"Stored {total_comments_fetched} comments total "
+                        f"(all committed to database)"
                     )
 
                 if total_comments_fetched == 0:
@@ -308,9 +237,7 @@ class DocumentLoader:
                     await conn.commit()
                     return stats
 
-                # Commit transaction
-                await conn.commit()
-                logger.info("Database transaction committed")
+                logger.info("All comments loaded successfully")
 
             finally:
                 await conn.close()
@@ -328,7 +255,6 @@ class DocumentLoader:
         logger.info(
             f"Completed loading {document_id}: "
             f"{stats['comments_processed']} comments, "
-            f"{stats['chunks_created']} chunks, "
             f"{stats['errors']} errors, "
             f"{stats['duration']:.1f}s"
         )
