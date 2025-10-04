@@ -114,44 +114,11 @@ class DocumentLoader:
                 ),
             )
 
-    async def _store_batch(
-        self,
-        comments: list,
-        document_id: str,
-        conn,
-        stats: dict,
-    ) -> None:
-        """Store a batch of raw comments without processing.
-
-        Args:
-            comments: List of comment details from API
-            document_id: Parent document ID
-            conn: Database connection
-            stats: Statistics dictionary to update
-        """
-        # Store each comment
-        for comment in comments:
-            try:
-                # Store comment without classification or embeddings
-                await self._store_comment(
-                    comment,
-                    document_id,
-                    category=None,
-                    sentiment=None,
-                    conn=conn,
-                )
-
-                stats["comments_processed"] += 1
-
-            except Exception as e:
-                logger.error(f"Error storing comment {comment.get('id')}: {e}")
-                stats["errors"] += 1
-
     @traceable(name="load_document")
     async def load_document(
         self,
         document_id: str,
-        batch_size: int = 10,
+        commit_every: int = 10,
     ) -> dict:
         """Load a document and all its comments into the database.
 
@@ -162,7 +129,7 @@ class DocumentLoader:
 
         Args:
             document_id: Document ID (e.g., "CMS-2025-0304-0009")
-            batch_size: Number of comments to fetch in parallel
+            commit_every: Commit to database after this many comments (default: 10)
 
         Returns:
             Statistics about the loading process
@@ -196,36 +163,38 @@ class DocumentLoader:
                 await self._store_document(document_data, conn)
                 logger.info(f"Stored document metadata for {document_id}")
 
-                # 2. Fetch and store comments incrementally
-                logger.info("Starting incremental comment loading...")
+                # 2. Fetch and store comments one at a time
+                logger.info("Starting sequential comment loading (4 seconds per comment)...")
 
-                comment_batch = []
                 total_comments_fetched = 0
 
-                async for comment_detail in self.api_client.get_all_comment_details(
-                    object_id, batch_size=batch_size
-                ):
-                    comment_batch.append(comment_detail)
-                    total_comments_fetched += 1
-
-                    # Store batch when it reaches desired size
-                    if len(comment_batch) >= batch_size:
-                        await self._store_batch(
-                            comment_batch, document_id, conn, stats
+                async for comment_detail in self.api_client.get_all_comment_details(object_id):
+                    try:
+                        # Store comment immediately
+                        await self._store_comment(
+                            comment_detail,
+                            document_id,
+                            category=None,
+                            sentiment=None,
+                            conn=conn,
                         )
-                        # Commit after each batch so data is immediately visible
-                        await conn.commit()
-                        logger.info(
-                            f"Stored {total_comments_fetched} comments "
-                            f"(committed to database)"
-                        )
-                        comment_batch = []
+                        stats["comments_processed"] += 1
+                        total_comments_fetched += 1
 
-                # Store any remaining comments
-                if comment_batch:
-                    await self._store_batch(
-                        comment_batch, document_id, conn, stats
-                    )
+                        # Commit every N comments so data is visible
+                        if total_comments_fetched % commit_every == 0:
+                            await conn.commit()
+                            logger.info(
+                                f"Stored {total_comments_fetched} comments "
+                                f"(committed to database)"
+                            )
+
+                    except Exception as e:
+                        logger.error(f"Error storing comment: {e}")
+                        stats["errors"] += 1
+
+                # Final commit for any remaining comments
+                if total_comments_fetched % commit_every != 0:
                     await conn.commit()
                     logger.info(
                         f"Stored {total_comments_fetched} comments total "
@@ -234,8 +203,6 @@ class DocumentLoader:
 
                 if total_comments_fetched == 0:
                     logger.warning(f"No comments found for document {document_id}")
-                    await conn.commit()
-                    return stats
 
                 logger.info("All comments loaded successfully")
 

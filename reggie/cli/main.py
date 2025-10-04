@@ -60,35 +60,20 @@ def init(force: bool):
 
 @cli.command()
 @click.argument("document_id")
-@click.option(
-    "--batch-size",
-    default=10,
-    help="Number of comments to process in parallel (default: 10)",
-)
-def load(document_id: str, batch_size: int):
+def load(document_id: str):
     """Load a document and its comments from Regulations.gov.
 
     DOCUMENT_ID: The document ID (e.g., CMS-2025-0304-0009)
 
+    Comments are fetched sequentially with a 4-second delay between requests
+    to stay under the API rate limit of 1000 requests per hour.
+
     Example:
         reggie load CMS-2025-0304-0009
     """
-    # Verify required environment variables
-    required_vars = ["OPENAI_API_KEY"]
-    missing = [var for var in required_vars if not os.getenv(var)]
-
-    if missing:
-        console.print(
-            f"[red]Error: Missing required environment variables: {', '.join(missing)}[/red]"
-        )
-        console.print("\nPlease set the following environment variables:")
-        for var in missing:
-            console.print(f"  - {var}")
-        return
-
     async def _load():
         loader = DocumentLoader()
-        stats = await loader.load_document(document_id, batch_size=batch_size)
+        stats = await loader.load_document(document_id)
         return stats
 
     console.print(f"\n[bold]Loading document:[/bold] {document_id}\n")

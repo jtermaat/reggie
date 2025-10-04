@@ -3,7 +3,6 @@
 import os
 from typing import Dict, List, Optional, AsyncIterator
 import asyncio
-import time
 from tenacity import (
     retry,
     stop_after_attempt,
@@ -13,63 +12,26 @@ from tenacity import (
 import httpx
 
 
-class RateLimiter:
-    """Rate limiter to ensure we don't exceed API limits (1000 requests/hour)."""
-
-    def __init__(self, max_requests: int = 1000, time_window: float = 3600.0):
-        """Initialize rate limiter.
-
-        Args:
-            max_requests: Maximum number of requests allowed in the time window
-            time_window: Time window in seconds (default: 3600 = 1 hour)
-        """
-        self.max_requests = max_requests
-        self.time_window = time_window
-        self.requests = []  # List of request timestamps
-        self._lock = asyncio.Lock()
-
-    async def acquire(self):
-        """Wait until a request can be made without exceeding rate limit."""
-        while True:
-            wait_time = None
-            async with self._lock:
-                now = time.time()
-
-                # Remove timestamps outside the current window
-                self.requests = [ts for ts in self.requests if now - ts < self.time_window]
-
-                # If we're at the limit, calculate wait time
-                if len(self.requests) >= self.max_requests:
-                    oldest = self.requests[0]
-                    wait_time = self.time_window - (now - oldest) + 0.1  # Add small buffer
-                else:
-                    # We can proceed - record this request
-                    self.requests.append(time.time())
-                    return
-
-            # Wait outside the lock to avoid deadlock
-            if wait_time and wait_time > 0:
-                await asyncio.sleep(wait_time)
-
-
 class RegulationsAPIClient:
     """Async client for interacting with Regulations.gov API v4."""
 
     BASE_URL = "https://api.regulations.gov/v4"
 
-    def __init__(self, api_key: Optional[str] = None, max_requests_per_hour: int = 990):
+    # Delay between requests to stay under 1000 requests/hour limit
+    # 4 seconds per request = 900 requests/hour (safely under 1000 limit)
+    REQUEST_DELAY = 4.0
+
+    def __init__(self, api_key: Optional[str] = None):
         """Initialize the API client.
 
         Args:
             api_key: API key for regulations.gov.
-            max_requests_per_hour: Maximum requests per hour (default: 990, under API limit of 1000)
         """
         self.api_key = api_key or os.getenv("REG_API_KEY", "DEMO_KEY")
         self.client = httpx.AsyncClient(
             headers={"X-Api-Key": self.api_key},
             timeout=30.0,
         )
-        self.rate_limiter = RateLimiter(max_requests=max_requests_per_hour, time_window=3600.0)
 
     async def close(self):
         """Close the HTTP client."""
@@ -100,8 +62,9 @@ class RegulationsAPIClient:
         Raises:
             httpx.HTTPStatusError: On HTTP errors after retries
         """
-        # Wait for rate limiter before making request
-        await self.rate_limiter.acquire()
+        # Simple rate limiting: wait 4 seconds between requests
+        # This ensures we never exceed 1000 requests/hour (4s = 900 req/hr)
+        await asyncio.sleep(self.REQUEST_DELAY)
 
         url = f"{self.BASE_URL}/{endpoint}"
         response = await self.client.get(url, params=params)
@@ -185,49 +148,23 @@ class RegulationsAPIClient:
         data = await self._get(f"comments/{comment_id}")
         return data.get("data", {})
 
-    async def get_all_comment_details(
-        self, object_id: str, batch_size: int = 10
-    ) -> AsyncIterator[Dict]:
+    async def get_all_comment_details(self, object_id: str) -> AsyncIterator[Dict]:
         """Get detailed information for all comments on a document.
+
+        Fetches comments sequentially with rate limiting (4 seconds between requests).
 
         Args:
             object_id: Document object ID
-            batch_size: Number of comments to fetch details for in parallel
 
         Yields:
             Detailed comment data dicts
         """
-        batch = []
         async for comment in self.get_all_comments(object_id):
-            batch.append(comment)
-
-            if len(batch) >= batch_size:
-                # Fetch details for batch in parallel
-                tasks = [
-                    self.get_comment_details(c["id"])
-                    for c in batch
-                ]
-                details = await asyncio.gather(*tasks, return_exceptions=True)
-
-                for detail in details:
-                    if isinstance(detail, Exception):
-                        # Log error but continue
-                        print(f"Error fetching comment detail: {detail}")
-                        continue
-                    yield detail
-
-                batch = []
-
-        # Process remaining batch
-        if batch:
-            tasks = [
-                self.get_comment_details(c["id"])
-                for c in batch
-            ]
-            details = await asyncio.gather(*tasks, return_exceptions=True)
-
-            for detail in details:
-                if isinstance(detail, Exception):
-                    print(f"Error fetching comment detail: {detail}")
-                    continue
+            try:
+                # Fetch details one at a time (rate limited by _get method)
+                detail = await self.get_comment_details(comment["id"])
                 yield detail
+            except Exception as e:
+                # Log error but continue
+                print(f"Error fetching comment detail: {e}")
+                continue
