@@ -1,20 +1,16 @@
 """Database connection utilities"""
 
-import os
 from pathlib import Path
 import psycopg
 from psycopg import sql
 
+from ..config import DatabaseConfig
+
 
 def get_connection_string() -> str:
     """Get PostgreSQL connection string from environment variables."""
-    host = os.getenv("POSTGRES_HOST", "localhost")
-    port = os.getenv("POSTGRES_PORT", "5432")
-    database = os.getenv("POSTGRES_DB", "reggie")
-    user = os.getenv("POSTGRES_USER", "postgres")
-    password = os.getenv("POSTGRES_PASSWORD", "")
-
-    return f"postgresql://{user}:{password}@{host}:{port}/{database}"
+    db_config = DatabaseConfig()
+    return db_config.connection_string
 
 
 async def init_db(connection_string: str = None) -> None:

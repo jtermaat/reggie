@@ -18,7 +18,7 @@ class APIConfig(BaseSettings):
     reg_api_request_delay: float = 4.0  # seconds between requests
 
     # OpenAI API
-    openai_api_key: Optional[str] = None
+    openai_api_key: str  # Required - no default
 
     # LangSmith
     langsmith_api_key: Optional[str] = None

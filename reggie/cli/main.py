@@ -1,6 +1,7 @@
 """Main CLI interface for Reggie"""
 
 import asyncio
+import logging
 import os
 from pathlib import Path
 
