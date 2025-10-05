@@ -84,7 +84,12 @@ class RegulationsAPIClient:
         return data.get("data", {})
 
     async def get_comments_page(
-        self, object_id: str, page_number: int = 1, page_size: int = 250
+        self,
+        object_id: str,
+        page_number: int = 1,
+        page_size: int = 250,
+        sort: str = None,
+        last_modified_date_ge: str = None,
     ) -> Dict:
         """Get a single page of comments for a document.
 
@@ -92,6 +97,8 @@ class RegulationsAPIClient:
             object_id: Document object ID
             page_number: Page number (1-indexed)
             page_size: Number of results per page (max 250)
+            sort: Sort order (e.g., "lastModifiedDate,documentId")
+            last_modified_date_ge: Filter for lastModifiedDate >= this value (format: "YYYY-MM-DD HH:mm:ss")
 
         Returns:
             Response with comments data and metadata
@@ -101,12 +108,26 @@ class RegulationsAPIClient:
             "page[size]": min(page_size, 250),
             "page[number]": page_number,
         }
+
+        if sort:
+            params["sort"] = sort
+
+        if last_modified_date_ge:
+            params["filter[lastModifiedDate][ge]"] = last_modified_date_ge
+
         return await self._get("comments", params=params)
 
     async def get_all_comments(
         self, object_id: str, page_size: int = 250
     ) -> AsyncIterator[Dict]:
         """Asynchronously iterate over all comments for a document.
+
+        The API limits page numbers to 20 max. To fetch >5000 comments, this method
+        uses date-based windowing following the official regulations.gov approach:
+        - Sort by lastModifiedDate,documentId
+        - When hitting page 20, use the last comment's lastModifiedDate
+        - Continue with filter[lastModifiedDate][ge] for next batch
+        - Repeat until all comments retrieved
 
         Args:
             object_id: Document object ID
@@ -115,26 +136,75 @@ class RegulationsAPIClient:
         Yields:
             Individual comment data dicts
         """
-        page_number = 1
+        import logging
+        from datetime import datetime
+
+        logger = logging.getLogger(__name__)
+        MAX_PAGE_NUMBER = 20  # API limitation
+
+        # Use lastModifiedDate for windowing per regulations.gov official docs
+        sort_order = "lastModifiedDate,documentId"
+        last_modified_filter = None
+        total_fetched = 0
+
         while True:
-            response = await self.get_comments_page(object_id, page_number, page_size)
+            page_number = 1
 
-            comments = response.get("data", [])
-            if not comments:
-                break
+            # Fetch up to 20 pages in this window
+            while page_number <= MAX_PAGE_NUMBER:
+                response = await self.get_comments_page(
+                    object_id,
+                    page_number,
+                    page_size,
+                    sort=sort_order,
+                    last_modified_date_ge=last_modified_filter,
+                )
 
-            for comment in comments:
-                yield comment
+                comments = response.get("data", [])
+                if not comments:
+                    # No more comments in this window
+                    return
 
-            # Check if there are more pages
-            meta = response.get("meta", {})
-            total_elements = meta.get("totalElements", 0)
-            total_pages = (total_elements + page_size - 1) // page_size
+                for comment in comments:
+                    yield comment
+                    total_fetched += 1
 
-            if page_number >= total_pages:
-                break
+                # Check if there are more pages in this window
+                meta = response.get("meta", {})
+                total_elements = meta.get("totalElements", 0)
+                has_next_page = meta.get("hasNextPage", False)
 
-            page_number += 1
+                if not has_next_page:
+                    # We've reached the end of all comments
+                    logger.info(f"Fetched all {total_fetched} comments for document")
+                    return
+
+                # If we're on page 20 and there are more pages, we need to move to next window
+                if page_number >= MAX_PAGE_NUMBER:
+                    # Get the lastModifiedDate of the last comment on this page
+                    last_comment = comments[-1]
+                    last_modified_iso = last_comment.get("attributes", {}).get("lastModifiedDate")
+
+                    if not last_modified_iso:
+                        logger.warning("Last comment missing lastModifiedDate, cannot continue windowing")
+                        return
+
+                    # Convert ISO format to "YYYY-MM-DD HH:mm:ss" (Eastern time as per docs)
+                    # The API expects Eastern time format
+                    try:
+                        dt = datetime.fromisoformat(last_modified_iso.replace("Z", "+00:00"))
+                        last_modified_filter = dt.strftime("%Y-%m-%d %H:%M:%S")
+                        logger.info(
+                            f"Reached page limit. Fetched {total_fetched} comments so far. "
+                            f"Continuing with filter[lastModifiedDate][ge]={last_modified_filter}"
+                        )
+                        # Break inner loop to start a new window
+                        break
+                    except Exception as e:
+                        logger.error(f"Error parsing lastModifiedDate: {e}")
+                        return
+
+                page_number += 1
 
     async def get_comment_details(self, comment_id: str) -> Dict:
         """Get detailed information for a specific comment.
@@ -148,21 +218,40 @@ class RegulationsAPIClient:
         data = await self._get(f"comments/{comment_id}")
         return data.get("data", {})
 
-    async def get_all_comment_details(self, object_id: str) -> AsyncIterator[Dict]:
+    async def get_all_comment_details(
+        self, object_id: str, db_conn=None
+    ) -> AsyncIterator[Dict]:
         """Get detailed information for all comments on a document.
 
         Fetches comments sequentially with rate limiting (4 seconds between requests).
+        If a database connection is provided, checks if comments already exist before
+        fetching details to avoid unnecessary API calls.
 
         Args:
             object_id: Document object ID
+            db_conn: Optional database connection to check for existing comments
 
         Yields:
             Detailed comment data dicts
         """
         async for comment in self.get_all_comments(object_id):
             try:
+                comment_id = comment["id"]
+
+                # If we have a database connection, check if comment exists
+                # and skip the API call if it does (saves rate limit quota)
+                if db_conn:
+                    async with db_conn.cursor() as cur:
+                        await cur.execute(
+                            "SELECT 1 FROM comments WHERE id = %s LIMIT 1",
+                            (comment_id,)
+                        )
+                        if await cur.fetchone() is not None:
+                            # Comment exists, skip API call
+                            continue
+
                 # Fetch details one at a time (rate limited by _get method)
-                detail = await self.get_comment_details(comment["id"])
+                detail = await self.get_comment_details(comment_id)
                 yield detail
             except Exception as e:
                 # Log error but continue

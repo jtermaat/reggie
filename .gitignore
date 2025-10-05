@@ -52,7 +52,9 @@ wheels/
 .coverage
 htmlcov/
 
+# Data
 commenter_types.json
+data/*.csv
 
 #repomix
 repomix-output.xml

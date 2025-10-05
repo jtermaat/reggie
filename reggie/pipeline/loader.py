@@ -66,6 +66,23 @@ class DocumentLoader:
                 ),
             )
 
+    async def _comment_exists(self, comment_id: str, conn) -> bool:
+        """Check if a comment already exists in the database.
+
+        Args:
+            comment_id: Comment ID to check
+            conn: Database connection
+
+        Returns:
+            True if comment exists, False otherwise
+        """
+        async with conn.cursor() as cur:
+            await cur.execute(
+                "SELECT 1 FROM comments WHERE id = %s LIMIT 1",
+                (comment_id,)
+            )
+            return await cur.fetchone() is not None
+
     async def _store_comment(
         self,
         comment_data: dict,
@@ -167,9 +184,19 @@ class DocumentLoader:
                 logger.info("Starting sequential comment loading (4 seconds per comment)...")
 
                 total_comments_fetched = 0
+                skipped_comments = 0
 
-                async for comment_detail in self.api_client.get_all_comment_details(object_id):
+                async for comment_detail in self.api_client.get_all_comment_details(object_id, conn):
                     try:
+                        comment_id = comment_detail.get("id")
+
+                        # Skip if comment already exists
+                        if await self._comment_exists(comment_id, conn):
+                            skipped_comments += 1
+                            if skipped_comments % 100 == 0:
+                                logger.info(f"Skipped {skipped_comments} existing comments")
+                            continue
+
                         # Store comment immediately
                         await self._store_comment(
                             comment_detail,
@@ -201,7 +228,10 @@ class DocumentLoader:
                         f"(all committed to database)"
                     )
 
-                if total_comments_fetched == 0:
+                if skipped_comments > 0:
+                    logger.info(f"Skipped {skipped_comments} comments that already existed")
+
+                if total_comments_fetched == 0 and skipped_comments == 0:
                     logger.warning(f"No comments found for document {document_id}")
 
                 logger.info("All comments loaded successfully")
