@@ -1,58 +1,17 @@
 """LangChain pipeline for categorizing comments with structured output"""
 
-import os
 import asyncio
 import logging
 from typing import Dict, Optional
-from enum import Enum
 
-from pydantic import BaseModel, Field
 from langchain_openai import ChatOpenAI
 from langsmith import traceable
 
-from ..config import setup_langsmith
+from ..config import setup_langsmith, APIConfig, ProcessingConfig
+from ..models import CommentClassification, Category, Sentiment
+from ..exceptions import ConfigurationException
 
 logger = logging.getLogger(__name__)
-
-
-class Sentiment(str, Enum):
-    """Comment sentiment categories."""
-    FOR = "for"
-    AGAINST = "against"
-    MIXED = "mixed"
-    UNCLEAR = "unclear"
-
-
-class Category(str, Enum):
-    """Commenter categories."""
-    PHYSICIANS_SURGEONS = "Physicians & Surgeons"
-    OTHER_LICENSED_CLINICIANS = "Other Licensed Clinicians"
-    HEALTHCARE_PRACTICE_STAFF = "Healthcare Practice Staff"
-    PATIENTS_CAREGIVERS = "Patients & Caregivers"
-    PATIENT_ADVOCATES = "Patient/Disability Advocates & Advocacy Organizations"
-    PROFESSIONAL_ASSOCIATIONS = "Professional Associations"
-    HOSPITALS_HEALTH_SYSTEMS = "Hospitals Health Systems & Networks"
-    HEALTHCARE_COMPANIES = "Healthcare Companies & Corporations"
-    PHARMA_BIOTECH = "Pharmaceutical & Biotech Companies"
-    MEDICAL_DEVICE_DIGITAL_HEALTH = "Medical Device & Digital Health Companies"
-    GOVERNMENT_PUBLIC_PROGRAMS = "Government & Public Programs"
-    ACADEMIC_RESEARCH = "Academic & Research Institutions"
-    NONPROFITS_FOUNDATIONS = "Nonprofits & Foundations"
-    INDIVIDUALS_PRIVATE_CITIZENS = "Individuals / Private Citizens"
-    ANONYMOUS_NOT_SPECIFIED = "Anonymous / Not Specified"
-
-
-class CommentClassification(BaseModel):
-    """Structured output for comment classification."""
-    category: Category = Field(
-        description="The category of the commenter based on their role and affiliation"
-    )
-    sentiment: Sentiment = Field(
-        description="The overall sentiment of the comment toward the regulation"
-    )
-    reasoning: str = Field(
-        description="Brief explanation of the classification decisions"
-    )
 
 
 class CommentCategorizer:
@@ -82,15 +41,20 @@ Provide your classification along with brief reasoning."""
         """Initialize the categorizer.
 
         Args:
-            openai_api_key: OpenAI API key. If None, reads from OPENAI_API_KEY env var.
+            openai_api_key: OpenAI API key. If None, reads from config/env.
         """
-        api_key = openai_api_key or os.getenv("OPENAI_API_KEY")
+        api_config = APIConfig()
+        processing_config = ProcessingConfig()
+
+        api_key = openai_api_key or api_config.openai_api_key
         if not api_key:
-            raise ValueError("OPENAI_API_KEY must be set")
+            raise ConfigurationException(
+                "OPENAI_API_KEY must be set in environment or .env file"
+            )
 
         # Initialize LangChain model with structured output
         base_model = ChatOpenAI(
-            model="gpt-5-nano",
+            model=processing_config.categorization_model,
             api_key=api_key
         )
 

@@ -1,7 +1,6 @@
 """Main CLI interface for Reggie"""
 
 import asyncio
-import logging
 import os
 from pathlib import Path
 
@@ -13,15 +12,17 @@ from rich.progress import Progress, SpinnerColumn, TextColumn
 
 from ..db import init_db
 from ..pipeline import DocumentLoader, CommentProcessor
+from ..config import setup_langsmith
+from ..logging_config import setup_logging
 
 # Load environment variables
 load_dotenv()
 
 # Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-)
+setup_logging(level=os.getenv("LOG_LEVEL", "INFO"))
+
+# Setup LangSmith if configured
+setup_langsmith()
 
 console = Console()
 

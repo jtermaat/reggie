@@ -9,7 +9,7 @@ from langsmith import traceable
 
 from .categorizer import CommentCategorizer
 from .embedder import CommentEmbedder
-from ..db import get_connection_string
+from ..db import get_connection_string, CommentRepository, CommentChunkRepository
 
 logger = logging.getLogger(__name__)
 
@@ -32,38 +32,6 @@ class CommentProcessor:
         self.embedder = CommentEmbedder(openai_api_key=openai_api_key)
         self.connection_string = connection_string or get_connection_string()
 
-    async def _store_comment_chunks(
-        self,
-        comment_id: str,
-        chunks_with_embeddings: list,
-        conn,
-    ) -> None:
-        """Store comment chunks and embeddings in database.
-
-        Args:
-            comment_id: Comment ID
-            chunks_with_embeddings: List of (chunk_text, embedding) tuples
-            conn: Database connection
-        """
-        if not chunks_with_embeddings:
-            return
-
-        async with conn.cursor() as cur:
-            # Delete existing chunks for this comment
-            await cur.execute(
-                "DELETE FROM comment_chunks WHERE comment_id = %s",
-                (comment_id,)
-            )
-
-            # Insert new chunks
-            for idx, (chunk_text, embedding) in enumerate(chunks_with_embeddings):
-                await cur.execute(
-                    """
-                    INSERT INTO comment_chunks (comment_id, chunk_text, chunk_index, embedding)
-                    VALUES (%s, %s, %s, %s)
-                    """,
-                    (comment_id, chunk_text, idx, embedding),
-                )
 
     @traceable(name="process_comments")
     async def process_comments(
@@ -97,17 +65,7 @@ class CommentProcessor:
 
             try:
                 # Fetch unprocessed comments from database
-                async with conn.cursor() as cur:
-                    await cur.execute(
-                        """
-                        SELECT id, comment_text, first_name, last_name, organization
-                        FROM comments
-                        WHERE document_id = %s
-                        ORDER BY created_at
-                        """,
-                        (document_id,)
-                    )
-                    rows = await cur.fetchall()
+                rows = await CommentRepository.get_comments_for_document(document_id, conn)
 
                 if not rows:
                     logger.warning(f"No comments found for document {document_id}")
@@ -147,22 +105,15 @@ class CommentProcessor:
                             chunks_with_embeddings = all_chunks[j]
 
                             # Update comment with classification
-                            async with conn.cursor() as cur:
-                                await cur.execute(
-                                    """
-                                    UPDATE comments
-                                    SET category = %s, sentiment = %s, updated_at = NOW()
-                                    WHERE id = %s
-                                    """,
-                                    (
-                                        classification.category.value,
-                                        classification.sentiment.value,
-                                        comment_data["id"],
-                                    )
-                                )
+                            await CommentRepository.update_comment_classification(
+                                comment_data["id"],
+                                classification.category.value,
+                                classification.sentiment.value,
+                                conn,
+                            )
 
                             # Store chunks and embeddings
-                            await self._store_comment_chunks(
+                            await CommentChunkRepository.store_comment_chunks(
                                 comment_data["id"],
                                 chunks_with_embeddings,
                                 conn,

@@ -1,6 +1,5 @@
 """Async client for Regulations.gov API"""
 
-import os
 from typing import Dict, List, Optional, AsyncIterator
 import asyncio
 from tenacity import (
@@ -11,23 +10,22 @@ from tenacity import (
 )
 import httpx
 
+from ..config import APIConfig
+
 
 class RegulationsAPIClient:
     """Async client for interacting with Regulations.gov API v4."""
-
-    BASE_URL = "https://api.regulations.gov/v4"
-
-    # Delay between requests to stay under 1000 requests/hour limit
-    # 4 seconds per request = 900 requests/hour (safely under 1000 limit)
-    REQUEST_DELAY = 4.0
 
     def __init__(self, api_key: Optional[str] = None):
         """Initialize the API client.
 
         Args:
-            api_key: API key for regulations.gov.
+            api_key: API key for regulations.gov. If None, reads from config/env.
         """
-        self.api_key = api_key or os.getenv("REG_API_KEY", "DEMO_KEY")
+        config = APIConfig()
+        self.api_key = api_key or config.reg_api_key
+        self.base_url = config.reg_api_base_url
+        self.request_delay = config.reg_api_request_delay
         self.client = httpx.AsyncClient(
             headers={"X-Api-Key": self.api_key},
             timeout=30.0,
@@ -62,11 +60,11 @@ class RegulationsAPIClient:
         Raises:
             httpx.HTTPStatusError: On HTTP errors after retries
         """
-        # Simple rate limiting: wait 4 seconds between requests
-        # This ensures we never exceed 1000 requests/hour (4s = 900 req/hr)
-        await asyncio.sleep(self.REQUEST_DELAY)
+        # Simple rate limiting: wait between requests based on config
+        # Default 4s ensures we never exceed 1000 requests/hour (4s = 900 req/hr)
+        await asyncio.sleep(self.request_delay)
 
-        url = f"{self.BASE_URL}/{endpoint}"
+        url = f"{self.base_url}/{endpoint}"
         response = await self.client.get(url, params=params)
         response.raise_for_status()
         return response.json()
@@ -219,17 +217,14 @@ class RegulationsAPIClient:
         return data.get("data", {})
 
     async def get_all_comment_details(
-        self, object_id: str, db_conn=None
+        self, object_id: str
     ) -> AsyncIterator[Dict]:
         """Get detailed information for all comments on a document.
 
         Fetches comments sequentially with rate limiting (4 seconds between requests).
-        If a database connection is provided, checks if comments already exist before
-        fetching details to avoid unnecessary API calls.
 
         Args:
             object_id: Document object ID
-            db_conn: Optional database connection to check for existing comments
 
         Yields:
             Detailed comment data dicts
@@ -237,18 +232,6 @@ class RegulationsAPIClient:
         async for comment in self.get_all_comments(object_id):
             try:
                 comment_id = comment["id"]
-
-                # If we have a database connection, check if comment exists
-                # and skip the API call if it does (saves rate limit quota)
-                if db_conn:
-                    async with db_conn.cursor() as cur:
-                        await cur.execute(
-                            "SELECT 1 FROM comments WHERE id = %s LIMIT 1",
-                            (comment_id,)
-                        )
-                        if await cur.fetchone() is not None:
-                            # Comment exists, skip API call
-                            continue
 
                 # Fetch details one at a time (rate limited by _get method)
                 detail = await self.get_comment_details(comment_id)

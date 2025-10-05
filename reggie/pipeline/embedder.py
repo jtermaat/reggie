@@ -1,16 +1,16 @@
 """LangChain pipeline for chunking and embedding comments"""
 
-import os
 import asyncio
 import logging
-from typing import List, Dict, Tuple
+from typing import List, Dict, Tuple, Optional
 
 import tiktoken
 from langchain_openai import OpenAIEmbeddings
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langsmith import traceable
 
-from ..config import setup_langsmith
+from ..config import setup_langsmith, APIConfig, EmbeddingConfig
+from ..exceptions import ConfigurationException
 
 logger = logging.getLogger(__name__)
 
@@ -18,29 +18,39 @@ logger = logging.getLogger(__name__)
 class CommentEmbedder:
     """Chunks and embeds comments using LangChain and OpenAI embeddings."""
 
-    EMBEDDING_MODEL = "text-embedding-3-small"
-    EMBEDDING_DIMENSION = 1536
-
     def __init__(
         self,
-        openai_api_key: str = None,
-        chunk_size: int = 1000,
-        chunk_overlap: int = 200,
+        openai_api_key: Optional[str] = None,
+        chunk_size: Optional[int] = None,
+        chunk_overlap: Optional[int] = None,
     ):
         """Initialize the embedder.
 
         Args:
-            openai_api_key: OpenAI API key. If None, reads from OPENAI_API_KEY env var.
-            chunk_size: Target size for text chunks in tokens
-            chunk_overlap: Number of tokens to overlap between chunks
+            openai_api_key: OpenAI API key. If None, reads from config/env.
+            chunk_size: Target size for text chunks in tokens. If None, uses config default.
+            chunk_overlap: Number of tokens to overlap between chunks. If None, uses config default.
         """
-        api_key = openai_api_key or os.getenv("OPENAI_API_KEY")
+        api_config = APIConfig()
+        embedding_config = EmbeddingConfig()
+
+        api_key = openai_api_key or api_config.openai_api_key
         if not api_key:
-            raise ValueError("OPENAI_API_KEY must be set")
+            raise ConfigurationException(
+                "OPENAI_API_KEY must be set in environment or .env file"
+            )
+
+        # Use config values if not provided
+        chunk_size = chunk_size or embedding_config.chunk_size
+        chunk_overlap = chunk_overlap or embedding_config.chunk_overlap
+
+        # Store config values
+        self.embedding_model = embedding_config.embedding_model
+        self.embedding_dimension = embedding_config.embedding_dimension
 
         # Initialize OpenAI embeddings
         self.embeddings = OpenAIEmbeddings(
-            model=self.EMBEDDING_MODEL,
+            model=self.embedding_model,
             api_key=api_key,
         )
 
@@ -119,7 +129,7 @@ class CommentEmbedder:
             except Exception as e:
                 logger.error(f"Error embedding batch {i//batch_size}: {e}")
                 # Add zero vectors for failed embeddings
-                all_embeddings.extend([[0.0] * self.EMBEDDING_DIMENSION] * len(batch))
+                all_embeddings.extend([[0.0] * self.embedding_dimension] * len(batch))
 
         return all_embeddings
 

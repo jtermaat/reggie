@@ -6,11 +6,10 @@ from typing import Optional
 from datetime import datetime
 
 import psycopg
-from psycopg.types.json import Json
 from langsmith import traceable
 
 from ..api import RegulationsAPIClient
-from ..db import get_connection_string
+from ..db import get_connection_string, DocumentRepository, CommentRepository
 from ..config import setup_langsmith
 
 logger = logging.getLogger(__name__)
@@ -33,103 +32,6 @@ class DocumentLoader:
         self.api_client = RegulationsAPIClient(api_key=reg_api_key)
         self.connection_string = connection_string or get_connection_string()
 
-    async def _store_document(self, document_data: dict, conn) -> None:
-        """Store document metadata in database.
-
-        Args:
-            document_data: Document data from API
-            conn: Database connection
-        """
-        attrs = document_data.get("attributes", {})
-
-        async with conn.cursor() as cur:
-            await cur.execute(
-                """
-                INSERT INTO documents (id, title, object_id, docket_id, document_type, posted_date, metadata)
-                VALUES (%s, %s, %s, %s, %s, %s, %s)
-                ON CONFLICT (id) DO UPDATE SET
-                    title = EXCLUDED.title,
-                    docket_id = EXCLUDED.docket_id,
-                    document_type = EXCLUDED.document_type,
-                    posted_date = EXCLUDED.posted_date,
-                    metadata = EXCLUDED.metadata,
-                    updated_at = NOW()
-                """,
-                (
-                    document_data.get("id"),
-                    attrs.get("title"),
-                    attrs.get("objectId"),
-                    attrs.get("docketId"),
-                    attrs.get("documentType"),
-                    attrs.get("postedDate"),
-                    Json(attrs),
-                ),
-            )
-
-    async def _comment_exists(self, comment_id: str, conn) -> bool:
-        """Check if a comment already exists in the database.
-
-        Args:
-            comment_id: Comment ID to check
-            conn: Database connection
-
-        Returns:
-            True if comment exists, False otherwise
-        """
-        async with conn.cursor() as cur:
-            await cur.execute(
-                "SELECT 1 FROM comments WHERE id = %s LIMIT 1",
-                (comment_id,)
-            )
-            return await cur.fetchone() is not None
-
-    async def _store_comment(
-        self,
-        comment_data: dict,
-        document_id: str,
-        category: str = None,
-        sentiment: str = None,
-        conn = None,
-    ) -> None:
-        """Store comment in database.
-
-        Args:
-            comment_data: Comment data from API
-            document_id: Parent document ID
-            category: Classified category (optional)
-            sentiment: Classified sentiment (optional)
-            conn: Database connection
-        """
-        attrs = comment_data.get("attributes", {})
-
-        async with conn.cursor() as cur:
-            await cur.execute(
-                """
-                INSERT INTO comments (
-                    id, document_id, comment_text, category, sentiment,
-                    first_name, last_name, organization, posted_date, metadata
-                )
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                ON CONFLICT (id) DO UPDATE SET
-                    comment_text = EXCLUDED.comment_text,
-                    category = COALESCE(EXCLUDED.category, comments.category),
-                    sentiment = COALESCE(EXCLUDED.sentiment, comments.sentiment),
-                    metadata = EXCLUDED.metadata,
-                    updated_at = NOW()
-                """,
-                (
-                    comment_data.get("id"),
-                    document_id,
-                    attrs.get("comment", ""),
-                    category,
-                    sentiment,
-                    attrs.get("firstName"),
-                    attrs.get("lastName"),
-                    attrs.get("organization"),
-                    attrs.get("postedDate"),
-                    Json(attrs),
-                ),
-            )
 
     @traceable(name="load_document")
     async def load_document(
@@ -177,7 +79,7 @@ class DocumentLoader:
 
             try:
                 # Store document
-                await self._store_document(document_data, conn)
+                await DocumentRepository.store_document(document_data, conn)
                 logger.info(f"Stored document metadata for {document_id}")
 
                 # 2. Fetch and store comments one at a time
@@ -186,19 +88,19 @@ class DocumentLoader:
                 total_comments_fetched = 0
                 skipped_comments = 0
 
-                async for comment_detail in self.api_client.get_all_comment_details(object_id, conn):
+                async for comment_detail in self.api_client.get_all_comment_details(object_id):
                     try:
                         comment_id = comment_detail.get("id")
 
                         # Skip if comment already exists
-                        if await self._comment_exists(comment_id, conn):
+                        if await CommentRepository.comment_exists(comment_id, conn):
                             skipped_comments += 1
                             if skipped_comments % 100 == 0:
                                 logger.info(f"Skipped {skipped_comments} existing comments")
                             continue
 
                         # Store comment immediately
-                        await self._store_comment(
+                        await CommentRepository.store_comment(
                             comment_detail,
                             document_id,
                             category=None,
@@ -267,39 +169,6 @@ class DocumentLoader:
         conn = await psycopg.AsyncConnection.connect(self.connection_string)
 
         try:
-            async with conn.cursor() as cur:
-                await cur.execute(
-                    """
-                    SELECT
-                        d.id,
-                        d.title,
-                        d.docket_id,
-                        d.posted_date,
-                        COUNT(c.id) as comment_count,
-                        COUNT(DISTINCT c.category) as unique_categories,
-                        d.created_at
-                    FROM documents d
-                    LEFT JOIN comments c ON d.id = c.document_id
-                    GROUP BY d.id, d.title, d.docket_id, d.posted_date, d.created_at
-                    ORDER BY d.created_at DESC
-                    """
-                )
-
-                rows = await cur.fetchall()
-
-                documents = []
-                for row in rows:
-                    documents.append({
-                        "id": row[0],
-                        "title": row[1],
-                        "docket_id": row[2],
-                        "posted_date": row[3],
-                        "comment_count": row[4],
-                        "unique_categories": row[5],
-                        "loaded_at": row[6],
-                    })
-
-                return documents
-
+            return await DocumentRepository.list_documents(conn)
         finally:
             await conn.close()
