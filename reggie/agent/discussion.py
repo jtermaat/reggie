@@ -1,26 +1,17 @@
 """Main discussion agent for interactive document exploration."""
 
 import logging
-from typing import Annotated, Sequence, TypedDict, Optional, Dict, Any
+from typing import Optional
 
 from langchain_openai import ChatOpenAI
-from langchain_core.messages import BaseMessage, HumanMessage, AIMessage, SystemMessage
+from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
 from langchain_core.tools import tool
-from langgraph.graph import StateGraph, END
-from langgraph.prebuilt import ToolNode, tools_condition
-from langgraph.graph.message import add_messages
+from langgraph.prebuilt import create_react_agent
 
-from .tools import get_comment_statistics, StatisticalQueryInput
+from .tools import get_comment_statistics
 from .rag_graph import run_rag_search
 
 logger = logging.getLogger(__name__)
-
-
-class AgentState(TypedDict):
-    """State for the discussion agent."""
-
-    messages: Annotated[Sequence[BaseMessage], add_messages]
-    document_id: str
 
 
 class DiscussionAgent:
@@ -170,11 +161,10 @@ class DiscussionAgent:
 
         return [get_statistics, search_comments]
 
-    def _create_graph(self) -> StateGraph:
-        """Create the agent graph."""
+    def _create_graph(self):
+        """Create the agent graph using LangGraph's prebuilt ReAct agent."""
 
         tools = self._create_tools()
-        llm_with_tools = self.llm.bind_tools(tools)
 
         # Define the system message
         system_message = f"""You are a helpful assistant helping users explore and analyze public comments on a regulation document.
@@ -192,41 +182,12 @@ When users ask questions:
 
 Be helpful, concise, and base your answers on the data from the tools."""
 
-        async def call_model(state: AgentState):
-            """Call the language model."""
-            messages = state["messages"]
-
-            # Add system message if not present
-            if not messages or not isinstance(messages[0], SystemMessage):
-                messages = [SystemMessage(content=system_message)] + list(messages)
-
-            response = await llm_with_tools.ainvoke(messages)
-            return {"messages": [response]}
-
-        # Build the graph
-        workflow = StateGraph(AgentState)
-
-        # Add nodes
-        workflow.add_node("agent", call_model)
-        workflow.add_node("tools", ToolNode(tools))
-
-        # Set entry point
-        workflow.set_entry_point("agent")
-
-        # Add conditional edges
-        workflow.add_conditional_edges(
-            "agent",
-            tools_condition,
-            {
-                "tools": "tools",
-                END: END
-            }
+        # Use LangGraph's prebuilt ReAct agent
+        return create_react_agent(
+            model=self.llm,
+            tools=tools,
+            prompt=system_message
         )
-
-        # After tools, go back to agent
-        workflow.add_edge("tools", "agent")
-
-        return workflow.compile()
 
     async def invoke(self, message: str) -> str:
         """Send a message to the agent and get a response.
