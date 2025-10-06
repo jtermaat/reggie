@@ -1,16 +1,15 @@
 #!/usr/bin/env python3
 """
-Extract commenter types from regulations.gov comments for taxonomy building.
+Extract topic/issue tags from regulations.gov comments for taxonomy building.
 
 Usage:
-    python extract_commenter_types.py <docket_id> [--sample-size 300]
+    python comment_sample_analysis.py <docket_id> [--sample-size 300]
 
 Example:
-    python extract_commenter_types.py EOIR-2020-0003 --sample-size 300
+    python comment_sample_analysis.py EOIR-2020-0003 --sample-size 300
 """
 
 import json
-import time
 import random
 import os
 import asyncio
@@ -19,102 +18,159 @@ import argparse
 from openai import OpenAI
 from dotenv import load_dotenv
 
-# Import the main API client from reggie
+# Import database components
 import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from reggie.api import RegulationsAPIClient
+import psycopg
+from reggie.db.connection import get_connection_string
+from reggie.db.repository import CommentRepository
 
 # Load environment variables from .env file
 load_dotenv()
 
 
-async def sample_comments_from_docket(
-    api_client: RegulationsAPIClient,
-    docket_id: str,
-    sample_size: int = 300
+async def sample_comments_from_database(
+    sample_size: int = 300,
+    document_id: Optional[str] = None
 ) -> List[Dict]:
-    """Sample comments from a docket using the main API client.
+    """Sample comments from database.
 
     Args:
-        api_client: RegulationsAPIClient instance
-        docket_id: Docket ID to sample from
         sample_size: Number of comments to sample
+        document_id: Optional document ID to filter by. If None, samples from all comments.
 
     Returns:
-        List of sampled comment dicts
+        List of sampled comment dicts with keys: id, comment_text, first_name, last_name, organization
     """
-    print(f"Note: This is a simplified sampling implementation.")
-    print(f"For full docket sampling, you would need to implement document listing.")
-    print(f"Currently just returning empty list as placeholder.")
-    # This would require implementing get_documents_for_docket in the main API client
-    # For now, return empty list
-    return []
+    connection_string = get_connection_string()
+
+    if document_id:
+        print(f"Fetching comments from database for document {document_id}...")
+        async with await psycopg.AsyncConnection.connect(connection_string) as conn:
+            comment_rows = await CommentRepository.get_comments_for_document(document_id, conn)
+    else:
+        print(f"Fetching comments from database (all documents)...")
+        async with await psycopg.AsyncConnection.connect(connection_string) as conn:
+            async with conn.cursor() as cur:
+                await cur.execute(
+                    """
+                    SELECT id, comment_text, first_name, last_name, organization
+                    FROM comments
+                    ORDER BY created_at
+                    """
+                )
+                comment_rows = await cur.fetchall()
+
+    print(f"Found {len(comment_rows)} total comments in database")
+
+    if not comment_rows:
+        print("No comments found.")
+        return []
+
+    # Convert rows to dict format
+    all_comments = []
+    for row in comment_rows:
+        comment_dict = {
+            "id": row[0],
+            "comment_text": row[1],
+            "first_name": row[2],
+            "last_name": row[3],
+            "organization": row[4]
+        }
+        all_comments.append(comment_dict)
+
+    # Sample randomly
+    if len(all_comments) <= sample_size:
+        sampled_comments = all_comments
+        print(f"Using all {len(sampled_comments)} comments (less than sample size)")
+    else:
+        sampled_comments = random.sample(all_comments, sample_size)
+        print(f"Randomly sampled {len(sampled_comments)} comments")
+
+    return sampled_comments
 
 
-class CommenterTypeExtractor:
+class TopicIssueExtractor:
     FEW_SHOT_EXAMPLES = [
         {
-            "comment": "As a practicing neuropsychologist with 15 years of experience...",
-            "output": "Neuropsychologist"
+            "comment": "As a practicing neuropsychologist, I'm concerned about the impact of these changes on patient privacy and the burden of increased documentation requirements. The proposed timelines are unrealistic.",
+            "output": ["Patient Privacy", "Administrative Burden", "Implementation Timeline"]
         },
         {
-            "comment": "I am writing on behalf of the American Medical Association to express...",
-            "output": "Professional Association (Medical)"
-        },
-        {
-            "comment": "I'm an occupational therapist and I strongly oppose this regulation...",
-            "output": "Occupational Therapist"
+            "comment": "I'm an occupational therapist and I strongly oppose this regulation because it will reduce access to care in rural areas and create unfair licensing requirements across state lines.",
+            "output": ["Access to Care", "Rural Healthcare", "Licensing Requirements"]
         }
     ]
-    
+
     def __init__(self, openai_api_key: Optional[str] = None):
         self.client = OpenAI(api_key=openai_api_key)
-    
-    def extract_commenter_type(self, comment_text: str) -> str:
-        """Extract commenter type from a comment using GPT-5-nano with few-shot prompting."""
-        
+
+    def extract_topic_tags(self, comment_text: str) -> List[str]:
+        """Extract topic/issue tags from a comment using GPT-5-nano with few-shot prompting."""
+
         # Build few-shot prompt
         examples_text = "\n\n".join([
-            f"Comment: \"{ex['comment']}\"\nCommenter Type: {ex['output']}"
+            f"Comment: \"{ex['comment']}\"\nTopics/Issues: {json.dumps(ex['output'])}"
             for ex in self.FEW_SHOT_EXAMPLES
         ])
-        
-        prompt = f"""You are analyzing public comments on healthcare regulations. Extract only a description of the commenter.
+
+        prompt = f"""You are analyzing public comments on regulations. Extract a list of specific topics or issues discussed in the comment.
+
+Each topic should be a concise phrase (2-4 words). Return 1-5 topics per comment, focusing on the main issues raised.
 
 Examples:
 {examples_text}
 
-Now extract the commenter description from this comment:
+Now extract the topics/issues from this comment:
 Comment: "{comment_text}"
 
-Commenter Type:"""
+Topics/Issues (respond with ONLY a JSON array of strings):"""
 
         try:
             response = self.client.chat.completions.create(
                 model="gpt-5-nano",
                 messages=[
-                    {"role": "system", "content": "You extract commenter types from regulatory comments. Respond with ONLY the commenter type, nothing else."},
+                    {"role": "system", "content": "You extract topic/issue tags from regulatory comments. Respond with ONLY a JSON array of topic strings, nothing else."},
                     {"role": "user", "content": prompt}
-                ]
+                ],
+                response_format={"type": "json_object"}
             )
-            
-            commenter_type = response.choices[0].message.content.strip()
-            
-            return commenter_type
-            
+
+            content = response.choices[0].message.content.strip()
+
+            # Parse the JSON response
+            try:
+                # Try to parse as JSON object first (in case it's wrapped)
+                parsed = json.loads(content)
+                if isinstance(parsed, dict):
+                    # If it's a dict, look for common keys
+                    topics = parsed.get("topics") or parsed.get("issues") or parsed.get("tags") or []
+                elif isinstance(parsed, list):
+                    topics = parsed
+                else:
+                    topics = []
+
+                # Ensure all items are strings
+                topics = [str(t) for t in topics if t]
+
+                return topics if topics else ["Unable to Extract"]
+
+            except json.JSONDecodeError:
+                # Fallback: try to parse as plain list
+                return ["Unable to Extract"]
+
         except Exception as e:
-            print(f"Error extracting commenter type: {e}")
-            return "Error - Unable to Extract"
+            print(f"Error extracting topics: {e}")
+            return ["Error - Unable to Extract"]
     
-    async def extract_batch(self, comments: List[Dict], api_client: RegulationsAPIClient) -> List[str]:
-        """Extract commenter types from a batch of comments.
+    async def extract_batch(self, comments: List[Dict]) -> List[List[str]]:
+        """Extract topic/issue tags from a batch of comments.
 
         Args:
-            comments: List of comment dicts
-            api_client: RegulationsAPIClient instance
+            comments: List of comment dicts with keys: id, comment_text, first_name, last_name, organization
 
         Returns:
-            List of extracted commenter types
+            List of lists of extracted topic tags (one list per comment)
         """
         results = []
 
@@ -122,32 +178,17 @@ Commenter Type:"""
             comment_id = comment.get("id", "unknown")
 
             print(f"Processing comment {i+1}/{len(comments)} ({comment_id})...")
-            print(f"  Fetching full comment details...")
 
-            # Fetch the full comment details to get complete information
-            try:
-                comment_details = await api_client.get_comment_details(comment_id)
-                attributes = comment_details.get("attributes", {})
-            except Exception as e:
-                print(f"  Error fetching comment details: {e}")
-                attributes = comment.get("attributes", {})
+            # Get comment text from database format
+            comment_text = comment.get("comment_text", "")
 
-            # Get comment text
-            comment_text = attributes.get("comment", "")
+            print(f"  Comment preview: {comment_text[:150]}...")
 
-            # Try to get organization/name from metadata
-            first_name = attributes.get("firstName", "")
-            last_name = attributes.get("lastName", "")
-            organization = attributes.get("organization", "")
+            topic_tags = self.extract_topic_tags(comment_text)
 
-            # Build context
-            full_text = f"{organization}. {first_name} {last_name}. {comment_text}"
+            print(f"  Extracted topics: {topic_tags}")
 
-            print(f"  Comment preview: {full_text[:150]}...")
-
-            commenter_type = self.extract_commenter_type(full_text)
-
-            results.append(commenter_type)
+            results.append(topic_tags)
 
             await asyncio.sleep(0.2)  # Rate limiting for OpenAI
 
@@ -157,11 +198,11 @@ Commenter Type:"""
 async def async_main():
     """Async main function."""
     parser = argparse.ArgumentParser(
-        description="Extract commenter types from regulations.gov for taxonomy building"
+        description="Extract topic/issue tags from regulations.gov for taxonomy building"
     )
-    parser.add_argument("docket_id", help="Docket ID (e.g., EOIR-2020-0003)")
+    parser.add_argument("--document-id", help="Optional document ID to filter by (e.g., CMS-2025-0304-0009)")
     parser.add_argument("--sample-size", type=int, default=300, help="Number of comments to sample")
-    parser.add_argument("--output", default="commenter_types.json", help="Output JSON file")
+    parser.add_argument("--output", default="topic_tags.json", help="Output JSON file")
 
     args = parser.parse_args()
 
@@ -171,33 +212,29 @@ async def async_main():
         print("Error: OPENAI_API_KEY environment variable not set")
         return
 
-    # Get Regulations.gov API key from environment variable, fallback to DEMO_KEY
-    regs_api_key = os.getenv("REG_API_KEY", "DEMO_KEY")
+    # Initialize extractor
+    extractor = TopicIssueExtractor(openai_api_key=openai_key)
 
-    # Initialize clients
-    api_client = RegulationsAPIClient(api_key=regs_api_key)
-    extractor = CommenterTypeExtractor(openai_api_key=openai_key)
-
-    # Sample comments
+    # Sample comments from database
     print(f"\n{'='*60}")
-    print(f"Sampling {args.sample_size} comments from docket {args.docket_id}")
+    if args.document_id:
+        print(f"Sampling {args.sample_size} comments from document {args.document_id}")
+    else:
+        print(f"Sampling {args.sample_size} comments from all documents")
     print(f"{'='*60}\n")
 
-    comments = await sample_comments_from_docket(api_client, args.docket_id, args.sample_size)
+    comments = await sample_comments_from_database(args.sample_size, args.document_id)
 
     if not comments:
         print("No comments sampled. Exiting.")
-        await api_client.close()
         return
 
-    # Extract commenter types
+    # Extract topic tags
     print(f"\n{'='*60}")
-    print(f"Extracting commenter types using GPT-5-nano")
+    print(f"Extracting topic/issue tags using GPT-5-nano")
     print(f"{'='*60}\n")
 
-    results = await extractor.extract_batch(comments, api_client)
-
-    await api_client.close()
+    results = await extractor.extract_batch(comments)
 
     # Delete old output file if it exists
     if os.path.exists(args.output):
@@ -206,9 +243,9 @@ async def async_main():
 
     # Save results
     output_data = {
-        "docket_id": args.docket_id,
+        "document_id": args.document_id,
         "sample_size": len(results),
-        "commenter_types": results
+        "topic_tags": results
     }
 
     with open(args.output, "w") as f:
@@ -220,18 +257,22 @@ async def async_main():
     print(f"{'='*60}\n")
 
     from collections import Counter
-    type_counts = Counter(results)
+
+    # Flatten all tags to count frequencies
+    all_tags = [tag for tag_list in results for tag in tag_list]
+    tag_counts = Counter(all_tags)
 
     print(f"Total comments analyzed: {len(results)}")
-    print(f"\nTop 20 commenter types:")
-    for commenter_type, count in type_counts.most_common(20):
-        print(f"  {count:4d}  {commenter_type}")
+    print(f"Total unique tags: {len(tag_counts)}")
+    print(f"\nTop 30 most common topic/issue tags:")
+    for tag, count in tag_counts.most_common(30):
+        print(f"  {count:4d}  {tag}")
 
     print(f"\nFull results saved to: {args.output}")
     print(f"\nNext steps:")
-    print(f"  1. Review the commenter types")
-    print(f"  2. Group similar types into categories")
-    print(f"  3. Define your final taxonomy")
+    print(f"  1. Review the topic/issue tags")
+    print(f"  2. Group similar tags into categories")
+    print(f"  3. Define your final topic taxonomy")
 
 
 def main():

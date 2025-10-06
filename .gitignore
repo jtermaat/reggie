@@ -54,6 +54,7 @@ htmlcov/
 
 # Data
 commenter_types.json
+topic_tags.json
 data/*.csv
 
 #repomix
