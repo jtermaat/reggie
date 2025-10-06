@@ -22,6 +22,7 @@ class CommentCategorizer:
 Your task is to classify each comment by:
 1. **Category**: Identify the commenter's role/affiliation
 2. **Sentiment**: Determine their position on the regulation
+3. **Topics**: Identify all topics discussed in the comment (can be multiple)
 
 Guidelines for Category:
 - Look for explicit mentions of profession, organization, or role
@@ -34,6 +35,21 @@ Guidelines for Sentiment:
 - "against": Clearly opposes or disagrees with the regulation
 - "mixed": Expresses both support and opposition
 - "unclear": Cannot determine clear position
+
+Guidelines for Topics (select all that apply):
+- "reimbursement_payment": Payment rates, reimbursement methodologies, fee schedules
+- "cost_financial": Financial impact, costs, economic burden
+- "service_coverage": Coverage policies, benefits, covered services
+- "access_to_care": Patient access, availability of care, barriers to care
+- "workforce_staffing": Staffing requirements, workforce issues, provider shortages
+- "methodology_measurement": Quality metrics, measurement approaches, data collection
+- "implementation_feasibility": Operational challenges, timeline concerns, practical implementation
+- "administrative_burden": Paperwork, reporting requirements, administrative complexity
+- "telehealth_digital": Telemedicine, digital health, remote care
+- "health_equity": Health disparities, equity concerns, underserved populations
+- "quality_programs": Quality reporting, quality improvement, value-based care
+- "legal_clarity": Legal concerns, regulatory clarity, compliance issues
+- "unclear": Comment topic cannot be determined
 
 Provide your classification along with brief reasoning."""
 
@@ -127,9 +143,11 @@ Provide your classification along with brief reasoning."""
         except Exception as e:
             logger.error(f"Error categorizing comment: {e}")
             # Return default classification on error
+            from ..models import Topic
             return CommentClassification(
                 category=Category.ANONYMOUS_NOT_SPECIFIED,
                 sentiment=Sentiment.UNCLEAR,
+                topics=[Topic.UNCLEAR],
                 reasoning=f"Error during classification: {str(e)[:100]}"
             )
 
@@ -171,10 +189,12 @@ Provide your classification along with brief reasoning."""
                 if isinstance(result, Exception):
                     logger.error(f"Batch categorization error: {result}")
                     # Add default classification for failed items
+                    from ..models import Topic
                     results.append(
                         CommentClassification(
                             category=Category.ANONYMOUS_NOT_SPECIFIED,
                             sentiment=Sentiment.UNCLEAR,
+                            topics=[Topic.UNCLEAR],
                             reasoning=f"Error: {str(result)[:100]}"
                         )
                     )

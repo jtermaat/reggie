@@ -4,7 +4,7 @@ import pytest
 from unittest.mock import AsyncMock
 
 from reggie.pipeline.categorizer import CommentCategorizer
-from reggie.models import CommentClassification, Category, Sentiment
+from reggie.models import CommentClassification, Category, Sentiment, Topic
 from reggie.exceptions import ConfigurationException
 
 
@@ -103,6 +103,7 @@ class TestCategorization:
         mock_classification = CommentClassification(
             category=Category.PHYSICIANS_SURGEONS,
             sentiment=Sentiment.FOR,
+            topics=[Topic.REIMBURSEMENT_PAYMENT],
             reasoning="Test reasoning"
         )
 
@@ -152,6 +153,7 @@ class TestBatchCategorization:
         mock_classification = CommentClassification(
             category=Category.PHYSICIANS_SURGEONS,
             sentiment=Sentiment.FOR,
+            topics=[Topic.UNCLEAR],
             reasoning="Test"
         )
 
@@ -180,6 +182,7 @@ class TestBatchCategorization:
         mock_classification = CommentClassification(
             category=Category.PHYSICIANS_SURGEONS,
             sentiment=Sentiment.FOR,
+            topics=[Topic.COST_FINANCIAL],
             reasoning="Success"
         )
 
@@ -228,6 +231,7 @@ class TestBatchCategorization:
         mock_classification = CommentClassification(
             category=Category.PHYSICIANS_SURGEONS,
             sentiment=Sentiment.FOR,
+            topics=[Topic.HEALTH_EQUITY],
             reasoning="Test"
         )
 

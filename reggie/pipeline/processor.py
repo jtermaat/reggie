@@ -109,6 +109,7 @@ class CommentProcessor:
                                 comment_data["id"],
                                 classification.category.value,
                                 classification.sentiment.value,
+                                [topic.value for topic in classification.topics],
                                 conn,
                             )
 

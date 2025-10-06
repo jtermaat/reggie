@@ -24,6 +24,7 @@ CREATE TABLE IF NOT EXISTS comments (
     comment_text TEXT,
     category TEXT,
     sentiment TEXT,
+    topics TEXT[],
     first_name TEXT,
     last_name TEXT,
     organization TEXT,
@@ -37,6 +38,7 @@ CREATE INDEX IF NOT EXISTS idx_comments_document_id ON comments(document_id);
 CREATE INDEX IF NOT EXISTS idx_comments_category ON comments(category);
 CREATE INDEX IF NOT EXISTS idx_comments_sentiment ON comments(sentiment);
 CREATE INDEX IF NOT EXISTS idx_comments_category_sentiment ON comments(category, sentiment);
+CREATE INDEX IF NOT EXISTS idx_comments_topics ON comments USING GIN (topics);
 
 -- Comment chunks table for embeddings
 CREATE TABLE IF NOT EXISTS comment_chunks (

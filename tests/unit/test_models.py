@@ -11,7 +11,8 @@ from reggie.models import (
     Document,
     DocumentStats,
     Category,
-    Sentiment
+    Sentiment,
+    Topic
 )
 
 
@@ -133,11 +134,14 @@ class TestCommentClassificationModel:
         classification = CommentClassification(
             category=Category.PHYSICIANS_SURGEONS,
             sentiment=Sentiment.FOR,
+            topics=[Topic.REIMBURSEMENT_PAYMENT, Topic.COST_FINANCIAL],
             reasoning="Clear support from physician"
         )
 
         assert classification.category == Category.PHYSICIANS_SURGEONS
         assert classification.sentiment == Sentiment.FOR
+        assert len(classification.topics) == 2
+        assert Topic.REIMBURSEMENT_PAYMENT in classification.topics
         assert classification.reasoning == "Clear support from physician"
 
     def test_classification_enum_validation(self):
@@ -146,17 +150,20 @@ class TestCommentClassificationModel:
         classification = CommentClassification(
             category=Category.PATIENTS_CAREGIVERS,
             sentiment=Sentiment.AGAINST,
+            topics=[Topic.ACCESS_TO_CARE],
             reasoning="Test"
         )
         assert classification.category == Category.PATIENTS_CAREGIVERS
         assert classification.sentiment == Sentiment.AGAINST
+        assert classification.topics == [Topic.ACCESS_TO_CARE]
 
     def test_classification_requires_all_fields(self):
         """Classification requires all fields."""
         with pytest.raises(ValidationError) as exc_info:
             CommentClassification(
                 category=Category.PHYSICIANS_SURGEONS,
-                sentiment=Sentiment.FOR
+                sentiment=Sentiment.FOR,
+                topics=[Topic.UNCLEAR]
                 # Missing reasoning
             )
         assert "reasoning" in str(exc_info.value)

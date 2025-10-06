@@ -1,7 +1,7 @@
 """Data models for Reggie"""
 
 from .document import Document, DocumentStats
-from .comment import Comment, CommentData, CommentClassification, Category, Sentiment
+from .comment import Comment, CommentData, CommentClassification, Category, Sentiment, Topic
 from .stats import ProcessingStats
 
 __all__ = [
@@ -12,5 +12,6 @@ __all__ = [
     "CommentClassification",
     "Category",
     "Sentiment",
+    "Topic",
     "ProcessingStats",
 ]

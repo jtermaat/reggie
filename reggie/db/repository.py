@@ -119,6 +119,7 @@ class CommentRepository:
         document_id: str,
         category: Optional[str] = None,
         sentiment: Optional[str] = None,
+        topics: Optional[List[str]] = None,
         conn = None,
     ) -> None:
         """Store comment in database.
@@ -128,6 +129,7 @@ class CommentRepository:
             document_id: Parent document ID
             category: Classified category (optional)
             sentiment: Classified sentiment (optional)
+            topics: Classified topics (optional)
             conn: Database connection
         """
         attrs = comment_data.get("attributes", {})
@@ -136,14 +138,15 @@ class CommentRepository:
             await cur.execute(
                 """
                 INSERT INTO comments (
-                    id, document_id, comment_text, category, sentiment,
+                    id, document_id, comment_text, category, sentiment, topics,
                     first_name, last_name, organization, posted_date, metadata
                 )
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 ON CONFLICT (id) DO UPDATE SET
                     comment_text = EXCLUDED.comment_text,
                     category = COALESCE(EXCLUDED.category, comments.category),
                     sentiment = COALESCE(EXCLUDED.sentiment, comments.sentiment),
+                    topics = COALESCE(EXCLUDED.topics, comments.topics),
                     metadata = EXCLUDED.metadata,
                     updated_at = NOW()
                 """,
@@ -153,6 +156,7 @@ class CommentRepository:
                     attrs.get("comment", ""),
                     category,
                     sentiment,
+                    topics,
                     attrs.get("firstName"),
                     attrs.get("lastName"),
                     attrs.get("organization"),
@@ -166,7 +170,8 @@ class CommentRepository:
         comment_id: str,
         category: str,
         sentiment: str,
-        conn,
+        topics: Optional[List[str]] = None,
+        conn = None,
     ) -> None:
         """Update comment with classification results.
 
@@ -174,16 +179,17 @@ class CommentRepository:
             comment_id: Comment ID
             category: Classified category
             sentiment: Classified sentiment
+            topics: Classified topics (optional)
             conn: Database connection
         """
         async with conn.cursor() as cur:
             await cur.execute(
                 """
                 UPDATE comments
-                SET category = %s, sentiment = %s, updated_at = NOW()
+                SET category = %s, sentiment = %s, topics = %s, updated_at = NOW()
                 WHERE id = %s
                 """,
-                (category, sentiment, comment_id)
+                (category, sentiment, topics, comment_id)
             )
 
     @staticmethod

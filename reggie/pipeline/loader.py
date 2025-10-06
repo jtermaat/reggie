@@ -105,6 +105,7 @@ class DocumentLoader:
                             document_id,
                             category=None,
                             sentiment=None,
+                            topics=None,
                             conn=conn,
                         )
                         stats["comments_processed"] += 1
