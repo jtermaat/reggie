@@ -5,7 +5,6 @@ from typing import Optional
 from datetime import datetime
 
 import psycopg
-from langsmith import traceable
 
 from .categorizer import CommentCategorizer
 from .embedder import CommentEmbedder
@@ -33,11 +32,11 @@ class CommentProcessor:
         self.connection_string = connection_string or get_connection_string()
 
 
-    @traceable(name="process_comments")
     async def process_comments(
         self,
         document_id: str,
         batch_size: int = 10,
+        skip_processed: bool = False,
     ) -> dict:
         """Process raw comments: categorize, chunk, and embed.
 
@@ -46,6 +45,7 @@ class CommentProcessor:
         Args:
             document_id: Document ID
             batch_size: Number of comments to process in parallel
+            skip_processed: If True, only process comments that haven't been processed yet
 
         Returns:
             Statistics about the processing
@@ -64,11 +64,16 @@ class CommentProcessor:
             conn = await psycopg.AsyncConnection.connect(self.connection_string)
 
             try:
-                # Fetch unprocessed comments from database
-                rows = await CommentRepository.get_comments_for_document(document_id, conn)
+                # Fetch comments from database
+                rows = await CommentRepository.get_comments_for_document(
+                    document_id, conn, skip_processed=skip_processed
+                )
 
                 if not rows:
-                    logger.warning(f"No comments found for document {document_id}")
+                    if skip_processed:
+                        logger.info(f"No unprocessed comments found for document {document_id}")
+                    else:
+                        logger.warning(f"No comments found for document {document_id}")
                     return stats
 
                 logger.info(f"Found {len(rows)} comments to process")

@@ -6,7 +6,6 @@ from typing import Optional
 from datetime import datetime
 
 import psycopg
-from langsmith import traceable
 
 from ..api import RegulationsAPIClient
 from ..db import get_connection_string, DocumentRepository, CommentRepository
@@ -33,7 +32,6 @@ class DocumentLoader:
         self.connection_string = connection_string or get_connection_string()
 
 
-    @traceable(name="load_document")
     async def load_document(
         self,
         document_id: str,

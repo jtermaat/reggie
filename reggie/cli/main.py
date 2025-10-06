@@ -110,7 +110,12 @@ def load(document_id: str):
     default=10,
     help="Number of comments to process in parallel (default: 10)",
 )
-def process(document_id: str, batch_size: int):
+@click.option(
+    "--skip-processed",
+    is_flag=True,
+    help="Skip comments that have already been processed (categorized/embedded)",
+)
+def process(document_id: str, batch_size: int, skip_processed: bool):
     """Process comments: categorize and embed.
 
     DOCUMENT_ID: The document ID (e.g., CMS-2025-0304-0009)
@@ -119,6 +124,7 @@ def process(document_id: str, batch_size: int):
 
     Example:
         reggie process CMS-2025-0304-0009
+        reggie process CMS-2025-0304-0009 --skip-processed
     """
     # Verify required environment variables
     required_vars = ["OPENAI_API_KEY"]
@@ -135,10 +141,18 @@ def process(document_id: str, batch_size: int):
 
     async def _process():
         processor = CommentProcessor()
-        stats = await processor.process_comments(document_id, batch_size=batch_size)
+        stats = await processor.process_comments(
+            document_id,
+            batch_size=batch_size,
+            skip_processed=skip_processed
+        )
         return stats
 
-    console.print(f"\n[bold]Processing comments for:[/bold] {document_id}\n")
+    console.print(f"\n[bold]Processing comments for:[/bold] {document_id}")
+    if skip_processed:
+        console.print("[dim]Skipping already processed comments[/dim]\n")
+    else:
+        console.print()
 
     try:
         with Progress(

@@ -196,26 +196,41 @@ class CommentRepository:
     async def get_comments_for_document(
         document_id: str,
         conn,
+        skip_processed: bool = False,
     ) -> List[Tuple]:
         """Fetch all comments for a document.
 
         Args:
             document_id: Document ID
             conn: Database connection
+            skip_processed: If True, only fetch comments that haven't been processed yet
+                           (i.e., comments without sentiment or category)
 
         Returns:
             List of comment rows (id, comment_text, first_name, last_name, organization)
         """
         async with conn.cursor() as cur:
-            await cur.execute(
-                """
-                SELECT id, comment_text, first_name, last_name, organization
-                FROM comments
-                WHERE document_id = %s
-                ORDER BY created_at
-                """,
-                (document_id,)
-            )
+            if skip_processed:
+                await cur.execute(
+                    """
+                    SELECT id, comment_text, first_name, last_name, organization
+                    FROM comments
+                    WHERE document_id = %s
+                    AND (sentiment IS NULL OR category IS NULL)
+                    ORDER BY created_at
+                    """,
+                    (document_id,)
+                )
+            else:
+                await cur.execute(
+                    """
+                    SELECT id, comment_text, first_name, last_name, organization
+                    FROM comments
+                    WHERE document_id = %s
+                    ORDER BY created_at
+                    """,
+                    (document_id,)
+                )
             return await cur.fetchall()
 
 

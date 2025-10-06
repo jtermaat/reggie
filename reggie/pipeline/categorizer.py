@@ -5,7 +5,6 @@ import logging
 from typing import Dict, Optional
 
 from langchain_openai import ChatOpenAI
-from langsmith import traceable
 
 from ..config import setup_langsmith, APIConfig, ProcessingConfig
 from ..models import CommentClassification, Category, Sentiment
@@ -109,7 +108,6 @@ Provide your classification along with brief reasoning."""
 
         return "\n".join(parts)
 
-    @traceable(name="categorize_comment")
     async def categorize(
         self,
         comment_text: str,
@@ -151,7 +149,6 @@ Provide your classification along with brief reasoning."""
                 reasoning=f"Error during classification: {str(e)[:100]}"
             )
 
-    @traceable(name="categorize_batch")
     async def categorize_batch(
         self,
         comments: list[Dict],

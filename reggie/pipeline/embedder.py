@@ -7,7 +7,6 @@ from typing import List, Dict, Tuple, Optional
 import tiktoken
 from langchain_openai import OpenAIEmbeddings
 from langchain.text_splitter import RecursiveCharacterTextSplitter
-from langsmith import traceable
 
 from ..config import setup_langsmith, APIConfig, EmbeddingConfig
 from ..exceptions import ConfigurationException
@@ -77,7 +76,6 @@ class CommentEmbedder:
         """
         return len(self.tokenizer.encode(text))
 
-    @traceable(name="chunk_text")
     def chunk_text(self, text: str) -> List[str]:
         """Split text into chunks.
 
@@ -93,7 +91,6 @@ class CommentEmbedder:
         chunks = self.text_splitter.split_text(text)
         return chunks
 
-    @traceable(name="embed_chunks")
     async def embed_chunks(
         self,
         chunks: List[str],
@@ -133,7 +130,6 @@ class CommentEmbedder:
 
         return all_embeddings
 
-    @traceable(name="chunk_and_embed")
     async def chunk_and_embed(
         self,
         text: str,
@@ -158,7 +154,6 @@ class CommentEmbedder:
         # Pair chunks with embeddings
         return list(zip(chunks, embeddings))
 
-    @traceable(name="process_comments_batch")
     async def process_comments_batch(
         self,
         comments: List[Dict],
