@@ -220,25 +220,136 @@ def list():
 
 
 @cli.command()
-@click.argument("document_id", required=False)
-def discuss(document_id: str = None):
-    """Start an interactive discussion session (coming soon).
+@click.argument("document_id")
+def discuss(document_id: str):
+    """Start an interactive discussion session about a document.
 
-    DOCUMENT_ID: Optional document ID to discuss (e.g., CMS-2025-0304-0009)
+    DOCUMENT_ID: The document ID to discuss (e.g., CMS-2025-0304-0009)
+
+    This starts an interactive chat where you can:
+    • Ask statistical questions (e.g., "How many physicians support this?")
+    • Search comment content (e.g., "What did people say about costs?")
+    • Explore sentiment, categories, and topics
 
     Example:
-        reggie discuss
         reggie discuss CMS-2025-0304-0009
     """
-    console.print("\n[yellow]The 'discuss' command is coming soon![/yellow]")
-    console.print("\nThis feature will enable you to:")
-    console.print("  • Ask questions about loaded documents")
-    console.print("  • Query comment sentiment and categories")
-    console.print("  • Search for specific topics in comments")
-    console.print()
+    from ..agent import DiscussionAgent
+    from rich.markdown import Markdown
+    from rich.panel import Panel
 
-    if document_id:
-        console.print(f"Target document: {document_id}\n")
+    # Verify required environment variables
+    required_vars = ["OPENAI_API_KEY"]
+    missing = [var for var in required_vars if not os.getenv(var)]
+
+    if missing:
+        console.print(
+            f"[red]Error: Missing required environment variables: {', '.join(missing)}[/red]"
+        )
+        console.print("\nPlease set the following environment variables:")
+        for var in missing:
+            console.print(f"  - {var}")
+        return
+
+    async def _verify_document():
+        """Verify the document exists and has processed comments."""
+        from ..db.connection import get_connection
+
+        async with get_connection() as conn:
+            async with conn.cursor() as cur:
+                # Check document exists
+                await cur.execute(
+                    "SELECT title FROM documents WHERE id = %s",
+                    (document_id,)
+                )
+                doc = await cur.fetchone()
+
+                if not doc:
+                    return None, "Document not found"
+
+                # Check for processed comments (with embeddings)
+                await cur.execute(
+                    """
+                    SELECT COUNT(DISTINCT c.id)
+                    FROM comments c
+                    JOIN comment_chunks cc ON c.id = cc.comment_id
+                    WHERE c.document_id = %s
+                    """,
+                    (document_id,)
+                )
+                count = (await cur.fetchone())[0]
+
+                if count == 0:
+                    return doc[0], "no_comments"
+
+                return doc[0], count
+
+    async def _run_discussion():
+        """Run the interactive discussion."""
+        # Verify document
+        doc_title, status = await _verify_document()
+
+        if doc_title is None:
+            console.print(f"\n[red]Error: Document '{document_id}' not found.[/red]")
+            console.print("\nUse 'reggie list' to see available documents.")
+            console.print("Use 'reggie load <document_id>' to load a new document.\n")
+            return
+
+        if status == "no_comments":
+            console.print(f"\n[yellow]Warning: Document '{document_id}' has no processed comments.[/yellow]")
+            console.print("\nUse 'reggie process <document_id>' to process comments first.\n")
+            return
+
+        # Initialize agent
+        agent = DiscussionAgent(document_id=document_id)
+
+        # Display welcome message
+        console.print()
+        console.print(Panel.fit(
+            f"[bold cyan]Discussion Mode[/bold cyan]\n\n"
+            f"Document: {doc_title[:60]}{'...' if len(doc_title) > 60 else ''}\n"
+            f"Processed comments: {status}\n\n"
+            f"Ask me anything about this document's comments!\n"
+            f"Type 'exit' or 'quit' to end the session.",
+            border_style="cyan"
+        ))
+        console.print()
+
+        # Main conversation loop
+        while True:
+            try:
+                # Get user input
+                user_input = console.input("[bold green]You:[/bold green] ").strip()
+
+                if not user_input:
+                    continue
+
+                if user_input.lower() in ["exit", "quit", "q"]:
+                    console.print("\n[dim]Goodbye![/dim]\n")
+                    break
+
+                # Show thinking indicator
+                console.print()
+                with console.status("[bold cyan]Thinking...", spinner="dots"):
+                    response = await agent.invoke(user_input)
+
+                # Display response
+                console.print("[bold blue]Assistant:[/bold blue]")
+                console.print(Markdown(response))
+                console.print()
+
+            except KeyboardInterrupt:
+                console.print("\n\n[dim]Goodbye![/dim]\n")
+                break
+            except Exception as e:
+                console.print(f"\n[red]Error:[/red] {e}\n")
+                logging.exception("Error in discussion")
+
+    try:
+        asyncio.run(_run_discussion())
+    except Exception as e:
+        console.print(f"\n[red]Error:[/red] {e}")
+        logging.exception("Error starting discussion")
 
 
 def main():
