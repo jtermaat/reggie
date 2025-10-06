@@ -32,6 +32,7 @@ class APIConfig(BaseSettings):
         case_sensitive = False
         # Allow reading from environment variables
         env_prefix = ""
+        extra = "ignore"
 
 
 class DatabaseConfig(BaseSettings):
@@ -48,6 +49,7 @@ class DatabaseConfig(BaseSettings):
         env_file = ".env"
         env_file_encoding = "utf-8"
         case_sensitive = False
+        extra = "ignore"
 
     @property
     def connection_string(self) -> str:
@@ -68,6 +70,7 @@ class EmbeddingConfig(BaseSettings):
         env_file = ".env"
         env_file_encoding = "utf-8"
         case_sensitive = False
+        extra = "ignore"
 
 
 class ProcessingConfig(BaseSettings):
@@ -82,6 +85,7 @@ class ProcessingConfig(BaseSettings):
         env_file = ".env"
         env_file_encoding = "utf-8"
         case_sensitive = False
+        extra = "ignore"
 
 
 def setup_langsmith(
