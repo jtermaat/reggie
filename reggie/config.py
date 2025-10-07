@@ -61,12 +61,19 @@ class ReggieConfig(BaseSettings):
         """Get PostgreSQL connection string."""
         return f"postgresql://{self.postgres_user}:{self.postgres_password}@{self.postgres_host}:{self.postgres_port}/{self.postgres_db}"
 
-    def apply_langsmith(self) -> None:
-        """Apply LangSmith configuration to environment if enabled."""
-        if self.langsmith_enabled and self.langsmith_api_key:
-            os.environ["LANGCHAIN_TRACING_V2"] = str(self.langsmith_tracing).lower()
+    def apply_langsmith(self, enable_tracing: bool = False) -> None:
+        """Apply LangSmith configuration to environment if enabled.
+
+        Args:
+            enable_tracing: Whether to enable LangSmith tracing. If False, tracing is disabled.
+        """
+        if enable_tracing and self.langsmith_api_key:
+            os.environ["LANGCHAIN_TRACING_V2"] = "true"
             os.environ["LANGCHAIN_PROJECT"] = self.langsmith_project
             os.environ["LANGSMITH_API_KEY"] = self.langsmith_api_key
+        else:
+            # Ensure tracing is disabled by unsetting the environment variable
+            os.environ.pop("LANGCHAIN_TRACING_V2", None)
 
 
 # Singleton pattern for configuration

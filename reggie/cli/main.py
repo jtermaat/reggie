@@ -22,10 +22,6 @@ load_dotenv()
 # Configure logging
 setup_logging(level=os.getenv("LOG_LEVEL", "INFO"))
 
-# Setup LangSmith if configured
-config = get_config()
-config.apply_langsmith()
-
 console = Console()
 
 
@@ -116,7 +112,12 @@ def load(document_id: str):
     is_flag=True,
     help="Skip comments that have already been processed (categorized/embedded)",
 )
-def process(document_id: str, batch_size: int, skip_processed: bool):
+@click.option(
+    "--trace",
+    is_flag=True,
+    help="Enable LangSmith tracing for debugging and evaluation",
+)
+def process(document_id: str, batch_size: int, skip_processed: bool, trace: bool):
     """Process comments: categorize and embed.
 
     DOCUMENT_ID: The document ID (e.g., CMS-2025-0304-0009)
@@ -127,6 +128,12 @@ def process(document_id: str, batch_size: int, skip_processed: bool):
         reggie process CMS-2025-0304-0009
         reggie process CMS-2025-0304-0009 --skip-processed
     """
+    # Enable LangSmith tracing if requested
+    if trace:
+        config = get_config()
+        config.apply_langsmith(enable_tracing=True)
+        console.print("[dim]LangSmith tracing enabled[/dim]")
+
     # Verify required environment variables
     required_vars = ["OPENAI_API_KEY"]
     missing = [var for var in required_vars if not os.getenv(var)]
@@ -222,7 +229,12 @@ def list():
 
 @cli.command()
 @click.argument("document_id")
-def discuss(document_id: str):
+@click.option(
+    "--trace",
+    is_flag=True,
+    help="Enable LangSmith tracing for debugging and evaluation",
+)
+def discuss(document_id: str, trace: bool):
     """Start an interactive discussion session about a document.
 
     DOCUMENT_ID: The document ID to discuss (e.g., CMS-2025-0304-0009)
@@ -238,6 +250,12 @@ def discuss(document_id: str):
     from ..agent import DiscussionAgent
     from rich.markdown import Markdown
     from rich.panel import Panel
+
+    # Enable LangSmith tracing if requested
+    if trace:
+        config = get_config()
+        config.apply_langsmith(enable_tracing=True)
+        console.print("[dim]LangSmith tracing enabled[/dim]")
 
     # Verify required environment variables
     required_vars = ["OPENAI_API_KEY"]
