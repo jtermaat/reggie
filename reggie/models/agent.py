@@ -1,52 +1,12 @@
 """Models for agent operations."""
 
-from typing import List, Optional, Annotated
+from typing import List, Annotated, Optional
 from operator import add
 from pydantic import BaseModel, Field
 from langchain_core.messages import BaseMessage
 
 
-# Tool input models
-class StatisticalQueryFilters(BaseModel):
-    """Filters for statistical queries."""
-
-    sentiment: Optional[str] = Field(None, description="Filter by specific sentiment value")
-    category: Optional[str] = Field(None, description="Filter by specific category value")
-    topics: Optional[List[str]] = Field(None, description="Filter by topics (any or all)")
-
-
-class StatisticalQueryInput(BaseModel):
-    """Input for statistical query tool."""
-
-    group_by: str = Field(
-        ...,
-        description="What to group results by: 'sentiment', 'category', or 'topic'"
-    )
-    filters: Optional[StatisticalQueryFilters] = Field(
-        None,
-        description="Optional filters to apply before grouping"
-    )
-    topic_filter_mode: str = Field(
-        "any",
-        description="When filtering by topics: 'any' (has any topic) or 'all' (has all topics)"
-    )
-
-
-class TextQueryInput(BaseModel):
-    """Input for text-based query tool."""
-
-    query: str = Field(..., description="The question or search query about comment content")
-    filters: Optional[StatisticalQueryFilters] = Field(
-        None,
-        description="Optional filters to apply (sentiment, category, topics)"
-    )
-    topic_filter_mode: str = Field(
-        "any",
-        description="When filtering by topics: 'any' or 'all'"
-    )
-
-
-# Tool output models
+# Repository result models
 class StatisticsBreakdownItem(BaseModel):
     """Single item in a statistics breakdown."""
 
@@ -69,10 +29,16 @@ class RAGSnippet(BaseModel):
     snippet: str = Field(description="The relevant text snippet")
 
 
-class SearchResponse(BaseModel):
-    """Response from RAG search."""
+class CommentChunkSearchResult(BaseModel):
+    """Result from vector similarity search on comment chunks."""
 
-    snippets: List[RAGSnippet] = Field(description="List of relevant comment snippets")
+    comment_id: str = Field(description="ID of the comment this chunk belongs to")
+    chunk_text: str = Field(description="The text of the chunk")
+    chunk_index: int = Field(description="Index of this chunk within the comment")
+    distance: float = Field(description="Vector similarity distance")
+    sentiment: Optional[str] = Field(description="Sentiment of the parent comment")
+    category: Optional[str] = Field(description="Category of the parent comment")
+    topics: List[str] = Field(default_factory=list, description="Topics of the parent comment")
 
 
 # RAG graph models

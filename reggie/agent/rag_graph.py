@@ -11,7 +11,8 @@ from ..models.agent import (
     RelevanceAssessment,
     RelevantCommentSelection,
     CommentSnippet,
-    RAGState
+    RAGState,
+    RAGSnippet
 )
 from ..db.connection import get_connection
 from ..db.repository import CommentRepository, CommentChunkRepository
@@ -87,7 +88,7 @@ def create_rag_graph(embeddings_model: str = "text-embedding-3-small") -> StateG
 
         # Organize by comment_id
         for result in results:
-            comment_id = result["comment_id"]
+            comment_id = result.comment_id
             if comment_id not in state.all_retrieved_chunks:
                 state.all_retrieved_chunks[comment_id] = []
             state.all_retrieved_chunks[comment_id].append(result)
@@ -111,7 +112,7 @@ def create_rag_graph(embeddings_model: str = "text-embedding-3-small") -> StateG
         for comment_id, chunks in state.all_retrieved_chunks.items():
             for chunk in chunks:
                 chunks_summary.append(
-                    f"Comment {comment_id} (chunk {chunk['chunk_index']}): {chunk['chunk_text'][:200]}..."
+                    f"Comment {comment_id} (chunk {chunk.chunk_index}): {chunk.chunk_text[:200]}..."
                 )
 
         system_msg = """You are assessing whether we have retrieved enough relevant information to answer a user's question about regulation comments.
@@ -155,7 +156,7 @@ Do we have enough information to answer this question? If not, suggest a differe
         comment_summaries = []
         for comment_id, chunks in state.all_retrieved_chunks.items():
             # Combine chunks for this comment
-            chunk_texts = [c["chunk_text"] for c in chunks]
+            chunk_texts = [c.chunk_text for c in chunks]
             combined = " ... ".join(chunk_texts)
             comment_summaries.append(f"Comment ID: {comment_id}\n{combined[:500]}...")
 
@@ -234,10 +235,10 @@ Extract the portion of this comment that is relevant to answering the question."
                     logger.warning(f"Snippet not found in comment {comment_id}, skipping")
                     continue
 
-                snippets.append({
-                    "comment_id": comment_id,
-                    "snippet": snippet_obj.snippet
-                })
+                snippets.append(RAGSnippet(
+                    comment_id=comment_id,
+                    snippet=snippet_obj.snippet
+                ))
 
         logger.info(f"Extracted {len(snippets)} snippets")
 
@@ -307,7 +308,7 @@ async def run_rag_search(
     question: str,
     filters: Dict[str, Any] = None,
     topic_filter_mode: str = "any"
-) -> List[Dict[str, str]]:
+) -> List[RAGSnippet]:
     """Run the RAG search graph to find relevant comment snippets.
 
     Args:
@@ -317,7 +318,7 @@ async def run_rag_search(
         topic_filter_mode: 'any' or 'all' for topic filtering
 
     Returns:
-        List of {comment_id, snippet} dictionaries
+        List of RAGSnippet objects
     """
     graph = create_rag_graph()
 

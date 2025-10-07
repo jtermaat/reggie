@@ -79,12 +79,12 @@ class DiscussionAgent:
                 )
 
             # Format the result
-            output = [f"Total comments matching filters: {result['total_comments']}\n"]
+            output = [f"Total comments matching filters: {result.total_comments}\n"]
             output.append(f"Breakdown by {group_by}:")
 
-            for item in result["breakdown"]:
+            for item in result.breakdown:
                 output.append(
-                    f"  • {item['value']}: {item['count']} ({item['percentage']}%)"
+                    f"  • {item.value}: {item.count} ({item.percentage}%)"
                 )
 
             return "\n".join(output)
@@ -133,9 +133,9 @@ class DiscussionAgent:
             # Format the results
             output = [f"Found {len(snippets)} relevant comments:\n"]
 
-            for i, item in enumerate(snippets, 1):
-                output.append(f"{i}. Comment ID: {item['comment_id']}")
-                output.append(f"   {item['snippet']}\n")
+            for i, snippet in enumerate(snippets, 1):
+                output.append(f"{i}. Comment ID: {snippet.comment_id}")
+                output.append(f"   {snippet.snippet}\n")
 
             return "\n".join(output)
 

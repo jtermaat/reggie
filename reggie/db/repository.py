@@ -7,6 +7,12 @@ from datetime import datetime
 import psycopg
 from psycopg.types.json import Json
 
+from ..models.agent import (
+    StatisticsResponse,
+    StatisticsBreakdownItem,
+    CommentChunkSearchResult
+)
+
 logger = logging.getLogger(__name__)
 
 
@@ -282,7 +288,7 @@ class CommentRepository:
         category_filter: Optional[str] = None,
         topics_filter: Optional[List[str]] = None,
         topic_filter_mode: str = "any"
-    ) -> Dict:
+    ) -> StatisticsResponse:
         """Get statistical breakdown of comments.
 
         Args:
@@ -295,7 +301,7 @@ class CommentRepository:
             topic_filter_mode: 'any' or 'all' for topic filtering
 
         Returns:
-            Dict with total_comments and breakdown list
+            StatisticsResponse with total_comments and breakdown
 
         Raises:
             ValueError: If group_by is not valid
@@ -341,16 +347,16 @@ class CommentRepository:
             breakdown = []
             for row in rows:
                 value, count = row
-                breakdown.append({
-                    "value": value or "unknown",
-                    "count": count,
-                    "percentage": round((count / total * 100) if total > 0 else 0, 1)
-                })
+                breakdown.append(StatisticsBreakdownItem(
+                    value=value or "unknown",
+                    count=count,
+                    percentage=round((count / total * 100) if total > 0 else 0, 1)
+                ))
 
-            return {
-                "total_comments": total,
-                "breakdown": breakdown
-            }
+            return StatisticsResponse(
+                total_comments=total,
+                breakdown=breakdown
+            )
 
     @staticmethod
     async def get_full_text(comment_id: str, conn) -> str:
@@ -429,7 +435,7 @@ class CommentChunkRepository:
         category_filter: Optional[str] = None,
         topics_filter: Optional[List[str]] = None,
         topic_filter_mode: str = "any"
-    ) -> List[Dict]:
+    ) -> List[CommentChunkSearchResult]:
         """Search comment chunks using vector similarity.
 
         Args:
@@ -443,7 +449,7 @@ class CommentChunkRepository:
             topic_filter_mode: 'any' or 'all' for topic filtering
 
         Returns:
-            List of chunks with metadata
+            List of CommentChunkSearchResult objects
         """
         # Build filter clause for comments table
         where_clause, params = CommentRepository._build_filter_clause(
@@ -479,14 +485,14 @@ class CommentChunkRepository:
 
             results = []
             for row in rows:
-                results.append({
-                    "comment_id": row[0],
-                    "chunk_text": row[1],
-                    "chunk_index": row[2],
-                    "distance": float(row[3]),
-                    "sentiment": row[4],
-                    "category": row[5],
-                    "topics": row[6] or []
-                })
+                results.append(CommentChunkSearchResult(
+                    comment_id=row[0],
+                    chunk_text=row[1],
+                    chunk_index=row[2],
+                    distance=float(row[3]),
+                    sentiment=row[4],
+                    category=row[5],
+                    topics=row[6] or []
+                ))
 
             return results
