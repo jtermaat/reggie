@@ -82,6 +82,24 @@ class CommentData(BaseModel):
     last_name: Optional[str] = None
     organization: Optional[str] = None
 
+    @classmethod
+    def from_db_row(cls, row: tuple) -> "CommentData":
+        """Create CommentData from database row.
+
+        Args:
+            row: Database row (id, comment_text, first_name, last_name, organization)
+
+        Returns:
+            CommentData instance
+        """
+        return cls(
+            id=row[0],
+            comment_text=row[1] or "",
+            first_name=row[2],
+            last_name=row[3],
+            organization=row[4],
+        )
+
 
 class CommentClassification(BaseModel):
     """Structured output for comment classification."""

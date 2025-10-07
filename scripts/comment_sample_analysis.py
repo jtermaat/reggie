@@ -67,15 +67,15 @@ async def sample_comments_from_database(
         print("No comments found.")
         return []
 
-    # Convert rows to dict format
+    # Convert CommentData objects to dict format
     all_comments = []
-    for row in comment_rows:
+    for comment_data in comment_rows:
         comment_dict = {
-            "id": row[0],
-            "comment_text": row[1],
-            "first_name": row[2],
-            "last_name": row[3],
-            "organization": row[4]
+            "id": comment_data.id,
+            "comment_text": comment_data.comment_text,
+            "first_name": comment_data.first_name,
+            "last_name": comment_data.last_name,
+            "organization": comment_data.organization
         }
         all_comments.append(comment_dict)
 

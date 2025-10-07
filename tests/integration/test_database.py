@@ -260,12 +260,12 @@ class TestCommentRepository:
         comments = await CommentRepository.get_comments_for_document(doc_id, test_db)
 
         assert len(comments) == 3
-        # Verify structure: (id, comment_text, first_name, last_name, organization)
-        assert comments[0][0] == 'C1'
-        assert comments[0][1] == 'Comment 1'
-        assert comments[0][2] == 'John'
-        assert comments[1][0] == 'C2'
-        assert comments[2][4] is None  # NULL organization
+        # Verify structure: CommentData objects
+        assert comments[0].id == 'C1'
+        assert comments[0].comment_text == 'Comment 1'
+        assert comments[0].first_name == 'John'
+        assert comments[1].id == 'C2'
+        assert comments[2].organization is None  # NULL organization
 
 
 @pytest.mark.integration

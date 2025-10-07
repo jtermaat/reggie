@@ -301,7 +301,7 @@ def discuss(document_id: str):
             return
 
         # Initialize agent
-        agent = DiscussionAgent(document_id=document_id)
+        agent = DiscussionAgent.create(document_id=document_id)
 
         # Display welcome message
         console.print()

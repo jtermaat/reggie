@@ -12,6 +12,7 @@ from ..models.agent import (
     StatisticsBreakdownItem,
     CommentChunkSearchResult
 )
+from ..models.comment import CommentData
 
 logger = logging.getLogger(__name__)
 
@@ -203,7 +204,7 @@ class CommentRepository:
         document_id: str,
         conn,
         skip_processed: bool = False,
-    ) -> List[Tuple]:
+    ) -> List[CommentData]:
         """Fetch all comments for a document.
 
         Args:
@@ -213,7 +214,7 @@ class CommentRepository:
                            (i.e., comments without sentiment or category)
 
         Returns:
-            List of comment rows (id, comment_text, first_name, last_name, organization)
+            List of CommentData objects
         """
         async with conn.cursor() as cur:
             if skip_processed:
@@ -237,7 +238,8 @@ class CommentRepository:
                     """,
                     (document_id,)
                 )
-            return await cur.fetchall()
+            rows = await cur.fetchall()
+            return [CommentData.from_db_row(row) for row in rows]
 
     @staticmethod
     def _build_filter_clause(

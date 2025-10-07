@@ -80,100 +80,18 @@ class PipelineOrchestrator:
         """
         logger.info(f"Processing comments for document {document_id}")
 
-        stats = {
-            "document_id": document_id,
-            "comments_processed": 0,
-            "chunks_created": 0,
-            "errors": 0,
-            "start_time": datetime.now(),
-        }
+        stats = self._initialize_stats(document_id)
 
         try:
             async with get_connection(self.connection_string) as conn:
-                # Fetch comments from database
-                rows = await CommentRepository.get_comments_for_document(
-                    document_id, conn, skip_processed=skip_processed
-                )
+                rows = await self._fetch_comments(document_id, conn, skip_processed)
 
                 if not rows:
-                    if skip_processed:
-                        logger.info(f"No unprocessed comments found for document {document_id}")
-                    else:
-                        logger.warning(f"No comments found for document {document_id}")
+                    self._log_no_comments(document_id, skip_processed)
                     return stats
 
                 logger.info(f"Found {len(rows)} comments to process")
-
-                # Process in batches
-                for i in range(0, len(rows), batch_size):
-                    batch_rows = rows[i : i + batch_size]
-
-                    # Convert to CommentData objects
-                    comment_data_list = [
-                        CommentData(
-                            id=row[0],
-                            comment_text=row[1] or "",
-                            first_name=row[2],
-                            last_name=row[3],
-                            organization=row[4],
-                        )
-                        for row in batch_rows
-                    ]
-
-                    # Process batch through stages
-                    try:
-                        # Stage 1: Categorization
-                        classifications = await self.categorization_stage.process_batch(
-                            comment_data_list
-                        )
-
-                        # Stage 2: Embedding
-                        embeddings = await self.embedding_stage.process_batch(
-                            comment_data_list
-                        )
-
-                        # Store results in database
-                        for j, comment_data in enumerate(comment_data_list):
-                            try:
-                                classification = classifications[j]
-                                chunks_with_embeddings = embeddings[j]["chunks"]
-
-                                # Update comment with classification
-                                await CommentRepository.update_comment_classification(
-                                    comment_data.id,
-                                    classification["category"],
-                                    classification["sentiment"],
-                                    classification["topics"],
-                                    conn,
-                                )
-
-                                # Store chunks and embeddings
-                                await CommentChunkRepository.store_comment_chunks(
-                                    comment_data.id,
-                                    chunks_with_embeddings,
-                                    conn,
-                                )
-
-                                stats["comments_processed"] += 1
-                                stats["chunks_created"] += len(chunks_with_embeddings)
-
-                            except Exception as e:
-                                logger.error(
-                                    f"Error processing comment {comment_data.id}: {e}"
-                                )
-                                stats["errors"] += 1
-
-                        # Commit after each batch
-                        await conn.commit()
-                        logger.info(
-                            f"Processed {min(i + batch_size, len(rows))}/{len(rows)} comments "
-                            f"({stats['chunks_created']} chunks total)"
-                        )
-
-                    except Exception as e:
-                        logger.error(f"Error processing batch: {e}")
-                        stats["errors"] += len(batch_rows)
-                        continue
+                await self._process_batches(rows, batch_size, conn, stats)
 
         except Exception as e:
             logger.error(f"Error processing comments: {e}")
@@ -181,10 +99,156 @@ class PipelineOrchestrator:
             raise
 
         finally:
-            stats["end_time"] = datetime.now()
-            stats["duration"] = (
-                stats["end_time"] - stats["start_time"]
-            ).total_seconds()
+            self._finalize_stats(document_id, stats)
+
+        return stats
+
+    def _initialize_stats(self, document_id: str) -> dict:
+        """Initialize processing statistics.
+
+        Args:
+            document_id: Document ID being processed
+
+        Returns:
+            Statistics dictionary
+        """
+        return {
+            "document_id": document_id,
+            "comments_processed": 0,
+            "chunks_created": 0,
+            "errors": 0,
+            "start_time": datetime.now(),
+        }
+
+    async def _fetch_comments(
+        self, document_id: str, conn, skip_processed: bool
+    ) -> List[CommentData]:
+        """Fetch comments for processing.
+
+        Args:
+            document_id: Document ID
+            conn: Database connection
+            skip_processed: If True, only fetch unprocessed comments
+
+        Returns:
+            List of CommentData objects
+        """
+        return await CommentRepository.get_comments_for_document(
+            document_id, conn, skip_processed=skip_processed
+        )
+
+    def _log_no_comments(self, document_id: str, skip_processed: bool) -> None:
+        """Log message when no comments are found.
+
+        Args:
+            document_id: Document ID
+            skip_processed: Whether we were filtering for unprocessed comments
+        """
+        if skip_processed:
+            logger.info(f"No unprocessed comments found for document {document_id}")
+        else:
+            logger.warning(f"No comments found for document {document_id}")
+
+    async def _process_batches(
+        self, comments: List[CommentData], batch_size: int, conn, stats: dict
+    ) -> None:
+        """Process comments in batches.
+
+        Args:
+            comments: CommentData objects to process
+            batch_size: Number of comments per batch
+            conn: Database connection
+            stats: Statistics dictionary to update
+        """
+        for i in range(0, len(comments), batch_size):
+            batch = comments[i : i + batch_size]
+
+            try:
+                await self._process_single_batch(batch, conn, stats)
+                await conn.commit()
+                self._log_batch_progress(i, batch_size, len(comments), stats)
+
+            except Exception as e:
+                logger.error(f"Error processing batch: {e}")
+                stats["errors"] += len(batch)
+
+    async def _process_single_batch(
+        self, comment_data_list: List[CommentData], conn, stats: dict
+    ) -> None:
+        """Process a single batch of comments through the pipeline.
+
+        Args:
+            comment_data_list: List of CommentData to process
+            conn: Database connection
+            stats: Statistics dictionary to update
+        """
+        classifications = await self.categorization_stage.process_batch(
+            comment_data_list
+        )
+        embeddings = await self.embedding_stage.process_batch(comment_data_list)
+
+        for j, comment_data in enumerate(comment_data_list):
+            try:
+                await self._store_comment_results(
+                    comment_data, classifications[j], embeddings[j], conn
+                )
+                stats["comments_processed"] += 1
+                stats["chunks_created"] += len(embeddings[j]["chunks"])
+
+            except Exception as e:
+                logger.error(f"Error processing comment {comment_data.id}: {e}")
+                stats["errors"] += 1
+
+    async def _store_comment_results(
+        self, comment_data: CommentData, classification: dict, embedding: dict, conn
+    ) -> None:
+        """Store processing results for a single comment.
+
+        Args:
+            comment_data: Comment being processed
+            classification: Classification results
+            embedding: Embedding results with chunks
+            conn: Database connection
+        """
+        await CommentRepository.update_comment_classification(
+            comment_data.id,
+            classification["category"],
+            classification["sentiment"],
+            classification["topics"],
+            conn,
+        )
+
+        await CommentChunkRepository.store_comment_chunks(
+            comment_data.id,
+            embedding["chunks"],
+            conn,
+        )
+
+    def _log_batch_progress(
+        self, current_idx: int, batch_size: int, total: int, stats: dict
+    ) -> None:
+        """Log progress after processing a batch.
+
+        Args:
+            current_idx: Current index in the list
+            batch_size: Size of batches
+            total: Total number of comments
+            stats: Statistics dictionary
+        """
+        logger.info(
+            f"Processed {min(current_idx + batch_size, total)}/{total} comments "
+            f"({stats['chunks_created']} chunks total)"
+        )
+
+    def _finalize_stats(self, document_id: str, stats: dict) -> None:
+        """Finalize and log statistics.
+
+        Args:
+            document_id: Document ID that was processed
+            stats: Statistics dictionary to finalize
+        """
+        stats["end_time"] = datetime.now()
+        stats["duration"] = (stats["end_time"] - stats["start_time"]).total_seconds()
 
         logger.info(
             f"Completed processing {document_id}: "
@@ -193,5 +257,3 @@ class PipelineOrchestrator:
             f"{stats['errors']} errors, "
             f"{stats['duration']:.1f}s"
         )
-
-        return stats

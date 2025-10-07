@@ -173,7 +173,8 @@ class TestProcessCommand:
         # Verify batch_size was passed
         mock_processor_instance.process_comments.assert_called_once_with(
             "CMS-2024-0001-0001",
-            batch_size=20
+            batch_size=20,
+            skip_processed=False
         )
 
     def test_process_command_displays_error_on_failure(self, mocker):

@@ -30,31 +30,58 @@ class DiscussionAgent:
     def __init__(
         self,
         document_id: str,
+        llm: ChatOpenAI,
         checkpoint_dir: str = ".checkpoints",
-        model: str = None,
-        temperature: float = None
     ):
         """Initialize the discussion agent.
 
         Args:
             document_id: The document ID to discuss
+            llm: ChatOpenAI instance for LLM operations
             checkpoint_dir: Directory for storing conversation checkpoints
-            model: OpenAI model to use (defaults to AgentConfig.discussion_model)
-            temperature: Temperature for the model (defaults to AgentConfig.temperature)
         """
         self.document_id = document_id
+        self.llm = llm
         self.checkpoint_dir = checkpoint_dir
-
-        # Use AgentConfig for defaults
-        config = AgentConfig()
-        self.llm = ChatOpenAI(
-            model=model or config.discussion_model,
-            temperature=temperature if temperature is not None else config.temperature
-        )
 
         # Setup checkpointing for persistent memory
         self._setup_checkpointing()
         self.graph = self._create_graph()
+
+    @classmethod
+    def create(
+        cls,
+        document_id: str,
+        checkpoint_dir: str = ".checkpoints",
+        model: str = None,
+        temperature: float = None,
+        config: AgentConfig = None
+    ) -> "DiscussionAgent":
+        """Factory method to create a DiscussionAgent with default configuration.
+
+        Args:
+            document_id: The document ID to discuss
+            checkpoint_dir: Directory for storing conversation checkpoints
+            model: OpenAI model to use (overrides config)
+            temperature: Temperature for the model (overrides config)
+            config: AgentConfig instance (creates default if not provided)
+
+        Returns:
+            Configured DiscussionAgent instance
+        """
+        if config is None:
+            config = AgentConfig()
+
+        llm = ChatOpenAI(
+            model=model or config.discussion_model,
+            temperature=temperature if temperature is not None else config.temperature
+        )
+
+        return cls(
+            document_id=document_id,
+            llm=llm,
+            checkpoint_dir=checkpoint_dir
+        )
 
     def _setup_checkpointing(self):
         """Setup SQLite checkpointing for conversation persistence."""
