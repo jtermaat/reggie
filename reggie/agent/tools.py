@@ -9,6 +9,7 @@ from ..db.connection import get_connection
 from ..db.repository import CommentRepository
 from ..exceptions import RAGSearchError
 from ..prompts import prompts
+from ..models.agent import GetStatisticsInput, SearchCommentsInput
 from .rag_graph import run_rag_search
 
 logger = logging.getLogger(__name__)
@@ -154,12 +155,14 @@ def create_discussion_tools(document_id: str) -> list[StructuredTool]:
             func=get_statistics_bound,
             name="get_statistics",
             description=prompts.TOOL_GET_STATISTICS_DESC,
+            args_schema=GetStatisticsInput,
             coroutine=get_statistics_bound
         ),
         StructuredTool.from_function(
             func=search_comments_bound,
             name="search_comments",
             description=prompts.TOOL_SEARCH_COMMENTS_DESC,
+            args_schema=SearchCommentsInput,
             coroutine=search_comments_bound
         )
     ]

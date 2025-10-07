@@ -41,6 +41,55 @@ class CommentChunkSearchResult(BaseModel):
     topics: List[str] = Field(default_factory=list, description="Topics of the parent comment")
 
 
+# Tool input models
+class GetStatisticsInput(BaseModel):
+    """Input schema for get_statistics tool."""
+
+    group_by: str = Field(
+        description="What to group results by: 'sentiment', 'category', or 'topic'"
+    )
+    sentiment_filter: Optional[str] = Field(
+        default=None,
+        description="Optional text filter for specific sentiment (e.g., 'support', 'oppose', 'mixed')"
+    )
+    category_filter: Optional[str] = Field(
+        default=None,
+        description="Optional text filter for specific category (e.g., 'Individual', 'Organization')"
+    )
+    topics_filter: Optional[List[str]] = Field(
+        default=None,
+        description="Optional list of topic strings to filter by"
+    )
+    topic_filter_mode: str = Field(
+        default="any",
+        description="When using topics_filter: 'any' means has any topic, 'all' means has all topics"
+    )
+
+
+class SearchCommentsInput(BaseModel):
+    """Input schema for search_comments tool."""
+
+    query: str = Field(
+        description="The question or topic to search for in comment text"
+    )
+    sentiment_filter: Optional[str] = Field(
+        default=None,
+        description="Optional text filter for specific sentiment (e.g., 'support', 'oppose', 'mixed')"
+    )
+    category_filter: Optional[str] = Field(
+        default=None,
+        description="Optional text filter for specific category (e.g., 'Individual', 'Organization')"
+    )
+    topics_filter: Optional[List[str]] = Field(
+        default=None,
+        description="Optional list of topic strings to filter by"
+    )
+    topic_filter_mode: str = Field(
+        default="any",
+        description="When using topics_filter: 'any' means has any topic, 'all' means has all topics"
+    )
+
+
 # RAG graph models
 class RelevanceAssessment(BaseModel):
     """Assessment of whether enough relevant information has been found."""
