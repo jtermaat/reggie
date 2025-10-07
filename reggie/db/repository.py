@@ -454,14 +454,15 @@ class CommentChunkRepository:
             List of CommentChunkSearchResult objects
         """
         # Build filter clause for comments table
-        where_clause, params = CommentRepository._build_filter_clause(
+        where_clause, filter_params = CommentRepository._build_filter_clause(
             document_id, sentiment_filter, category_filter, topics_filter, topic_filter_mode
         )
 
-        # Add embedding and limit to params
-        params.append(query_embedding)
-        params.append(limit)
-
+        # Build params in the correct order for the query:
+        # 1. embedding for distance calculation in SELECT
+        # 2. filter params for WHERE clause
+        # 3. embedding again for ORDER BY
+        # 4. limit
         query = f"""
             SELECT
                 cc.comment_id,
@@ -478,11 +479,11 @@ class CommentChunkRepository:
             LIMIT %s
         """
 
-        # Need to add embedding twice (once for distance calc, once for ordering)
-        params_with_dup = params[:-2] + [query_embedding, query_embedding] + [params[-1]]
+        # Assemble params in correct order
+        params = [query_embedding] + filter_params + [query_embedding, limit]
 
         async with conn.cursor() as cur:
-            await cur.execute(query, params_with_dup)
+            await cur.execute(query, params)
             rows = await cur.fetchall()
 
             results = []
