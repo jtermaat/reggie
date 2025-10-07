@@ -9,48 +9,13 @@ from langchain_openai import ChatOpenAI
 from ..config import setup_langsmith, APIConfig, ProcessingConfig
 from ..models import CommentClassification, Category, Sentiment
 from ..exceptions import ConfigurationException
+from ..prompts import prompts
 
 logger = logging.getLogger(__name__)
 
 
 class CommentCategorizer:
     """LangChain-based comment categorizer using structured output."""
-
-    SYSTEM_PROMPT = """You are an expert at analyzing public comments on healthcare regulations.
-
-Your task is to classify each comment by:
-1. **Category**: Identify the commenter's role/affiliation
-2. **Sentiment**: Determine their position on the regulation
-3. **Topics**: Identify all topics discussed in the comment (can be multiple)
-
-Guidelines for Category:
-- Look for explicit mentions of profession, organization, or role
-- Consider the context and language used
-- Default to "Individuals / Private Citizens" for unclear cases
-- Use "Anonymous / Not Specified" only when truly no information is available
-
-Guidelines for Sentiment:
-- "for": Clearly supports or agrees with the regulation
-- "against": Clearly opposes or disagrees with the regulation
-- "mixed": Expresses both support and opposition
-- "unclear": Cannot determine clear position
-
-Guidelines for Topics (select all that apply):
-- "reimbursement_payment": Payment rates, reimbursement methodologies, fee schedules
-- "cost_financial": Financial impact, costs, economic burden
-- "service_coverage": Coverage policies, benefits, covered services
-- "access_to_care": Patient access, availability of care, barriers to care
-- "workforce_staffing": Staffing requirements, workforce issues, provider shortages
-- "methodology_measurement": Quality metrics, measurement approaches, data collection
-- "implementation_feasibility": Operational challenges, timeline concerns, practical implementation
-- "administrative_burden": Paperwork, reporting requirements, administrative complexity
-- "telehealth_digital": Telemedicine, digital health, remote care
-- "health_equity": Health disparities, equity concerns, underserved populations
-- "quality_programs": Quality reporting, quality improvement, value-based care
-- "legal_clarity": Legal concerns, regulatory clarity, compliance issues
-- "unclear": Comment topic cannot be determined
-
-Provide your classification along with brief reasoning."""
 
     def __init__(self, openai_api_key: Optional[str] = None):
         """Initialize the categorizer.
@@ -134,9 +99,9 @@ Provide your classification along with brief reasoning."""
         )
 
         try:
-            result = await self.model.ainvoke(
-                f"{self.SYSTEM_PROMPT}\n\n{context}"
-            )
+            # Use PromptTemplate to format the prompt with context
+            formatted_prompt = prompts.CATEGORIZATION.format(context=context)
+            result = await self.model.ainvoke(formatted_prompt)
             return result
         except Exception as e:
             logger.error(f"Error categorizing comment: {e}")

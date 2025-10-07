@@ -17,6 +17,7 @@ from ..models.agent import (
 from ..db.connection import get_connection
 from ..db.repository import CommentRepository, CommentChunkRepository
 from ..exceptions import RAGSearchError
+from ..prompts import prompts
 
 logger = logging.getLogger(__name__)
 
@@ -115,25 +116,16 @@ def create_rag_graph(embeddings_model: str = "text-embedding-3-small") -> StateG
                     f"Comment {comment_id} (chunk {chunk.chunk_index}): {chunk.chunk_text[:200]}..."
                 )
 
-        system_msg = """You are assessing whether we have retrieved enough relevant information to answer a user's question about regulation comments.
-
-Review the chunks retrieved so far and determine if they contain enough information to answer the question.
-
-If not enough information has been found, suggest a different search query that might find more relevant information."""
-
-        user_msg = f"""Question: {question}
-
-Retrieved chunks so far ({len(chunks_summary)} chunks from {len(state.all_retrieved_chunks)} comments):
-
-{chr(10).join(chunks_summary[:20])}
-
-Do we have enough information to answer this question? If not, suggest a different query."""
+        # Use ChatPromptTemplate for structured message formatting
+        prompt_messages = prompts.RAG_RELEVANCE_ASSESSMENT.invoke({
+            "question": question,
+            "chunk_count": len(chunks_summary),
+            "comment_count": len(state.all_retrieved_chunks),
+            "chunks_summary": chr(10).join(chunks_summary[:20])
+        })
 
         llm_with_structure = llm.with_structured_output(RelevanceAssessment)
-        assessment = await llm_with_structure.ainvoke([
-            SystemMessage(content=system_msg),
-            HumanMessage(content=user_msg)
-        ])
+        assessment = await llm_with_structure.ainvoke(prompt_messages)
 
         logger.info(f"Assessment: {assessment.has_enough_information}, reasoning: {assessment.reasoning}")
 
@@ -160,23 +152,14 @@ Do we have enough information to answer this question? If not, suggest a differe
             combined = " ... ".join(chunk_texts)
             comment_summaries.append(f"Comment ID: {comment_id}\n{combined[:500]}...")
 
-        system_msg = """You are selecting which comments contain information relevant to answering the user's question.
-
-Review the retrieved comments and select the IDs of comments that contain relevant information."""
-
-        user_msg = f"""Question: {question}
-
-Retrieved comments:
-
-{chr(10).join(comment_summaries)}
-
-Which comment IDs contain relevant information?"""
+        # Use ChatPromptTemplate for structured message formatting
+        prompt_messages = prompts.RAG_SELECT_COMMENTS.invoke({
+            "question": question,
+            "comment_summaries": chr(10).join(comment_summaries)
+        })
 
         llm_with_structure = llm.with_structured_output(RelevantCommentSelection)
-        selection = await llm_with_structure.ainvoke([
-            SystemMessage(content=system_msg),
-            HumanMessage(content=user_msg)
-        ])
+        selection = await llm_with_structure.ainvoke(prompt_messages)
 
         logger.info(f"Selected {len(selection.relevant_comment_ids)} relevant comments")
 
@@ -208,23 +191,15 @@ Which comment IDs contain relevant information?"""
                     logger.warning(f"No text found for comment {comment_id}")
                     continue
 
-                system_msg = """You are extracting the relevant portion of a comment that helps answer the user's question.
-
-Extract the exact text from the comment that is relevant. The snippet should be a direct quote from the comment text."""
-
-                user_msg = f"""Question: {question}
-
-Comment text:
-{full_text}
-
-Extract the portion of this comment that is relevant to answering the question."""
+                # Use ChatPromptTemplate for structured message formatting
+                prompt_messages = prompts.RAG_EXTRACT_SNIPPET.invoke({
+                    "question": question,
+                    "full_text": full_text
+                })
 
                 llm_with_structure = llm.with_structured_output(CommentSnippet)
 
-                snippet_obj = await llm_with_structure.ainvoke([
-                    SystemMessage(content=system_msg),
-                    HumanMessage(content=user_msg)
-                ])
+                snippet_obj = await llm_with_structure.ainvoke(prompt_messages)
 
                 # Validate that snippet is actually in the comment
                 if not snippet_obj.snippet.strip():

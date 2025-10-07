@@ -10,6 +10,7 @@ from langgraph.prebuilt import create_react_agent
 from ..db.connection import get_connection
 from ..db.repository import CommentRepository
 from ..exceptions import AgentInvocationError, RAGSearchError
+from ..prompts import prompts
 from .rag_graph import run_rag_search
 
 logger = logging.getLogger(__name__)
@@ -141,21 +142,10 @@ class DiscussionAgent:
 
         tools = [get_statistics, search_comments]
 
-        # Define the system message
-        system_message = f"""You are a helpful assistant helping users explore and analyze public comments on a regulation document.
-
-You have access to two tools:
-1. get_statistics - Get statistical breakdowns of comments by sentiment, category, or topic
-2. search_comments - Search through comment text to find what people said about specific topics
-
-The document you're discussing has ID: {self.document_id}
-
-When users ask questions:
-- For questions about counts, distributions, or "how many", use get_statistics
-- For questions about what people said or specific content, use search_comments
-- You can combine both tools to provide comprehensive answers
-
-Be helpful, concise, and base your answers on the data from the tools."""
+        # Use centralized prompt template and format it
+        system_message = prompts.DISCUSSION_SYSTEM.format(
+            document_id=self.document_id
+        )
 
         # Use LangGraph's prebuilt ReAct agent
         return create_react_agent(
