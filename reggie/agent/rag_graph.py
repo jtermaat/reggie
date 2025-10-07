@@ -21,6 +21,7 @@ from .chains import (
     create_comment_selection_chain,
     create_snippet_extraction_chain
 )
+from .status import emit_status
 
 logger = logging.getLogger(__name__)
 
@@ -42,7 +43,7 @@ def create_rag_graph() -> StateGraph:
 
     async def generate_query(state: RAGState) -> Dict[str, Any]:
         """Generate or refine the search query based on user's question."""
-        logger.info("Generating search query")
+        logger.debug("Generating search query")
 
         # Get the user's question from messages
         user_messages = [m for m in state["messages"] if isinstance(m, HumanMessage)]
@@ -60,7 +61,7 @@ def create_rag_graph() -> StateGraph:
         else:
             query = state.get("current_query", question)
 
-        logger.info(f"Using query: {query}")
+        logger.debug(f"Using query: {query}")
 
         return {
             "current_query": query,
@@ -70,7 +71,7 @@ def create_rag_graph() -> StateGraph:
     async def search_vectors(state: RAGState) -> Dict[str, Any]:
         """Search for relevant comment chunks using vector similarity."""
         current_query = state.get("current_query", "")
-        logger.info(f"Searching vectors with query: {current_query}")
+        logger.debug(f"Searching vectors with query: {current_query}")
 
         # Create search chain with current state parameters
         filters = state.get("filters", {})
@@ -83,10 +84,24 @@ def create_rag_graph() -> StateGraph:
             topic_filter_mode=state.get("topic_filter_mode", "any")
         )
 
+        # Emit status with filter info if present
+        filter_parts = []
+        if filters.get("sentiment"):
+            filter_parts.append(f"sentiment={filters['sentiment']}")
+        if filters.get("category"):
+            filter_parts.append(f"category={filters['category']}")
+        if filters.get("topics"):
+            filter_parts.append(f"topics={filters['topics']}")
+
+        if filter_parts:
+            emit_status(f"querying comment text (filtered on {', '.join(filter_parts)})")
+        else:
+            emit_status("querying comment text")
+
         # Use LCEL chain to search
         results = await search_chain.ainvoke(current_query)
 
-        logger.info(f"Found {len(results)} chunks")
+        logger.debug(f"Found {len(results)} chunks")
 
         iteration_count = state.get("iteration_count", 0)
         if not results and iteration_count == 0:
@@ -109,7 +124,9 @@ def create_rag_graph() -> StateGraph:
 
     async def assess_relevance(state: RAGState) -> Dict[str, Any]:
         """Assess whether we have enough relevant information to answer the question."""
-        logger.info("Assessing relevance of retrieved information")
+        logger.debug("Assessing relevance of retrieved information")
+
+        emit_status("evaluating result completeness")
 
         # Get user's question
         user_messages = [m for m in state["messages"] if isinstance(m, HumanMessage)]
@@ -132,7 +149,7 @@ def create_rag_graph() -> StateGraph:
             "chunks_summary": chr(10).join(chunks_summary[:20])
         })
 
-        logger.info(f"Assessment: {assessment.has_enough_information}, reasoning: {assessment.reasoning}")
+        logger.debug(f"Assessment: {assessment.has_enough_information}, reasoning: {assessment.reasoning}")
 
         current_query = state.get("current_query", "")
         new_query = assessment.suggested_query if assessment.needs_different_query else current_query
@@ -145,7 +162,9 @@ def create_rag_graph() -> StateGraph:
 
     async def select_relevant_comments(state: RAGState) -> Dict[str, Any]:
         """Select which comments contain relevant information."""
-        logger.info("Selecting relevant comments")
+        logger.debug("Selecting relevant comments")
+
+        emit_status("selecting relevant comments")
 
         user_messages = [m for m in state["messages"] if isinstance(m, HumanMessage)]
         question = user_messages[-1].content
@@ -165,7 +184,7 @@ def create_rag_graph() -> StateGraph:
             "comment_summaries": chr(10).join(comment_summaries)
         })
 
-        logger.info(f"Selected {len(selection.relevant_comment_ids)} relevant comments")
+        logger.debug(f"Selected {len(selection.relevant_comment_ids)} relevant comments")
 
         return {
             "messages": [AIMessage(content=f"Selected {len(selection.relevant_comment_ids)} relevant comments")],
@@ -174,7 +193,9 @@ def create_rag_graph() -> StateGraph:
 
     async def extract_snippets(state: RAGState) -> Dict[str, Any]:
         """Extract relevant snippets from each selected comment."""
-        logger.info("Extracting snippets from relevant comments")
+        logger.debug("Extracting snippets from relevant comments")
+
+        emit_status("selecting most relevant comment text")
 
         # Get relevant comment IDs from the selection step
         relevant_ids = state.get("relevant_comment_ids", [])
@@ -216,7 +237,7 @@ def create_rag_graph() -> StateGraph:
                     snippet=snippet_obj.snippet
                 ))
 
-        logger.info(f"Extracted {len(snippets)} snippets")
+        logger.debug(f"Extracted {len(snippets)} snippets")
 
         if not snippets:
             logger.error("Failed to extract any valid snippets from comments")
@@ -233,23 +254,23 @@ def create_rag_graph() -> StateGraph:
         iteration_count = state.get("iteration_count", 0)
         max_iterations = state.get("max_iterations", 3)
         if iteration_count >= max_iterations:
-            logger.info("Reached max iterations, moving to selection")
+            logger.debug("Reached max iterations, moving to selection")
             return "select"
 
         # Check if we have any results
         all_retrieved = state.get("all_retrieved_chunks", {})
         if not all_retrieved:
-            logger.info("No results yet, continuing search")
+            logger.debug("No results yet, continuing search")
             return "search"
 
         # Parse the last assessment message to determine if we need more info
         # In a real implementation, we'd store the assessment in state
         # For now, if we have results and aren't at max iterations, move to select
         if len(all_retrieved) >= 3:  # Have at least 3 comments
-            logger.info("Have enough comments, moving to selection")
+            logger.debug("Have enough comments, moving to selection")
             return "select"
 
-        logger.info("Need more information, continuing search")
+        logger.debug("Need more information, continuing search")
         return "search"
 
     # Build the graph

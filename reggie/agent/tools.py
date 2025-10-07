@@ -11,6 +11,7 @@ from ..exceptions import RAGSearchError
 from ..prompts import prompts
 from ..models.agent import GetStatisticsInput, SearchCommentsInput
 from .rag_graph import run_rag_search
+from .status import emit_status
 
 logger = logging.getLogger(__name__)
 
@@ -36,6 +37,20 @@ async def get_statistics(
     Returns:
         Formatted string with statistical breakdown
     """
+    # Build filter info for status message
+    filter_parts = []
+    if sentiment_filter:
+        filter_parts.append(f"sentiment={sentiment_filter}")
+    if category_filter:
+        filter_parts.append(f"category={category_filter}")
+    if topics_filter:
+        filter_parts.append(f"topics={topics_filter}")
+
+    if filter_parts:
+        emit_status(f"querying comment statistics (filtered on {', '.join(filter_parts)})")
+    else:
+        emit_status("querying comment statistics")
+
     async with get_connection() as conn:
         result = await CommentRepository.get_statistics(
             document_id=document_id,

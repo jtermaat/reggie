@@ -234,7 +234,12 @@ def list():
     is_flag=True,
     help="Enable LangSmith tracing for debugging and evaluation",
 )
-def discuss(document_id: str, trace: bool):
+@click.option(
+    "--verbose",
+    is_flag=True,
+    help="Enable verbose logging to see detailed debug information",
+)
+def discuss(document_id: str, trace: bool, verbose: bool):
     """Start an interactive discussion session about a document.
 
     DOCUMENT_ID: The document ID to discuss (e.g., CMS-2025-0304-0009)
@@ -248,6 +253,7 @@ def discuss(document_id: str, trace: bool):
         reggie discuss CMS-2025-0304-0009
     """
     from ..agent import DiscussionAgent
+    from ..agent.status import set_status_callback, clear_status_callback
     from rich.markdown import Markdown
     from rich.panel import Panel
 
@@ -256,6 +262,11 @@ def discuss(document_id: str, trace: bool):
         config = get_config()
         config.apply_langsmith(enable_tracing=True)
         console.print("[dim]LangSmith tracing enabled[/dim]")
+
+    # Enable verbose logging if requested
+    if verbose:
+        logging.getLogger("reggie").setLevel(logging.DEBUG)
+        console.print("[dim]Verbose logging enabled[/dim]")
 
     # Verify required environment variables
     required_vars = ["OPENAI_API_KEY"]
@@ -322,6 +333,9 @@ def discuss(document_id: str, trace: bool):
         # Initialize agent
         agent = DiscussionAgent.create(document_id=document_id)
 
+        # Set up status callback to display status messages in gray
+        set_status_callback(lambda msg: console.print(f"[dim]{msg}[/dim]"))
+
         # Display welcome message
         console.print()
         console.print(Panel.fit(
@@ -363,6 +377,9 @@ def discuss(document_id: str, trace: bool):
             except Exception as e:
                 console.print(f"\n[red]Error:[/red] {e}\n")
                 logging.exception("Error in discussion")
+
+        # Clear status callback when session ends
+        clear_status_callback()
 
     try:
         asyncio.run(_run_discussion())
