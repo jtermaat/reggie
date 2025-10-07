@@ -4,14 +4,11 @@ import logging
 
 from langchain_openai import ChatOpenAI
 from langchain_core.messages import HumanMessage, AIMessage
-from langchain_core.tools import tool
 from langgraph.prebuilt import create_react_agent
 
-from ..db.connection import get_connection
-from ..db.repository import CommentRepository
-from ..exceptions import AgentInvocationError, RAGSearchError
+from ..exceptions import AgentInvocationError
 from ..prompts import prompts
-from .rag_graph import run_rag_search
+from .tools import create_discussion_tools
 
 logger = logging.getLogger(__name__)
 
@@ -43,104 +40,8 @@ class DiscussionAgent:
 
     def _create_graph(self):
         """Create the agent graph using LangGraph's prebuilt ReAct agent."""
-
-        # Create tools with document_id bound in closure
-        @tool
-        async def get_statistics(
-            group_by: str,
-            sentiment_filter: str = None,
-            category_filter: str = None,
-            topics_filter: list = None,
-            topic_filter_mode: str = "any"
-        ) -> str:
-            """Get statistical breakdown of comments.
-
-            Use this tool to get counts and percentages of comments grouped by sentiment, category, or topic.
-            You can also filter the results before grouping.
-
-            Args:
-                group_by: What to group results by - 'sentiment', 'category', or 'topic'
-                sentiment_filter: Optional - filter to specific sentiment (e.g., 'for', 'against', 'mixed', 'unclear')
-                category_filter: Optional - filter to specific category (e.g., 'Physicians & Surgeons')
-                topics_filter: Optional - filter to comments discussing certain topics (list of topics)
-                topic_filter_mode: When filtering by topics, use 'any' (has any topic) or 'all' (has all topics)
-
-            Returns:
-                A formatted string with the statistical breakdown
-            """
-            async with get_connection() as conn:
-                result = await CommentRepository.get_statistics(
-                    document_id=self.document_id,
-                    group_by=group_by,
-                    conn=conn,
-                    sentiment_filter=sentiment_filter,
-                    category_filter=category_filter,
-                    topics_filter=topics_filter,
-                    topic_filter_mode=topic_filter_mode
-                )
-
-            # Format the result
-            output = [f"Total comments matching filters: {result.total_comments}\n"]
-            output.append(f"Breakdown by {group_by}:")
-
-            for item in result.breakdown:
-                output.append(
-                    f"  • {item.value}: {item.count} ({item.percentage}%)"
-                )
-
-            return "\n".join(output)
-
-        @tool
-        async def search_comments(
-            query: str,
-            sentiment_filter: str = None,
-            category_filter: str = None,
-            topics_filter: list = None,
-            topic_filter_mode: str = "any"
-        ) -> str:
-            """Search comment text to find relevant information.
-
-            Use this tool to find what commenters said about specific topics or questions.
-            The tool will search through comment text and return relevant snippets.
-
-            Args:
-                query: The question or topic to search for (e.g., "what did people say about Medicare requirements?")
-                sentiment_filter: Optional - only search comments with specific sentiment
-                category_filter: Optional - only search comments from specific category
-                topics_filter: Optional - only search comments discussing certain topics
-                topic_filter_mode: When filtering by topics, use 'any' or 'all'
-
-            Returns:
-                Formatted text with relevant comment snippets and their IDs
-            """
-            filters = {}
-            if sentiment_filter:
-                filters["sentiment"] = sentiment_filter
-            if category_filter:
-                filters["category"] = category_filter
-            if topics_filter:
-                filters["topics"] = topics_filter
-
-            snippets = await run_rag_search(
-                document_id=self.document_id,
-                question=query,
-                filters=filters,
-                topic_filter_mode=topic_filter_mode
-            )
-
-            if not snippets:
-                raise RAGSearchError(f"No relevant comments found for query: {query}")
-
-            # Format the results
-            output = [f"Found {len(snippets)} relevant comments:\n"]
-
-            for i, snippet in enumerate(snippets, 1):
-                output.append(f"{i}. Comment ID: {snippet.comment_id}")
-                output.append(f"   {snippet.snippet}\n")
-
-            return "\n".join(output)
-
-        tools = [get_statistics, search_comments]
+        # Create tools with document_id bound
+        tools = create_discussion_tools(self.document_id)
 
         # Use centralized prompt template and format it
         system_message = prompts.DISCUSSION_SYSTEM.format(

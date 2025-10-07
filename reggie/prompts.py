@@ -108,6 +108,39 @@ Provide your classification along with brief reasoning.
 {context}"""
     )
 
+    # Tool descriptions - Optimized for LLM understanding
+    # These are separate from code docstrings to allow independent optimization
+
+    TOOL_GET_STATISTICS_DESC = """Get statistical breakdown of comments grouped by sentiment, category, or topic.
+
+Use this tool when you need counts, percentages, or distributions. You can filter the data before grouping to answer questions like:
+- "How many comments from physicians support this?"
+- "What percentage of comments discuss reimbursement?"
+- "Break down opposition by category"
+
+You can apply filters before grouping:
+- sentiment_filter: 'for', 'against', 'mixed', 'unclear'
+- category_filter: e.g., 'Physicians & Surgeons', 'Individuals / Private Citizens'
+- topics_filter: list of topics to filter by
+- topic_filter_mode: 'any' (has any topic) or 'all' (has all topics)
+
+Returns formatted text with total count and percentage breakdown."""
+
+    TOOL_SEARCH_COMMENTS_DESC = """Search comment text to find what people actually said about specific topics.
+
+Use this tool when you need to find actual quotes or examples of what commenters said. Good for questions like:
+- "What did people say about Medicare?"
+- "Give me examples of concerns about costs"
+- "What reasons did supporters give?"
+
+You can filter which comments to search:
+- sentiment_filter: only search comments with specific sentiment
+- category_filter: only search comments from specific category
+- topics_filter: only search comments discussing certain topics
+- topic_filter_mode: 'any' or 'all' when using topics_filter
+
+Returns relevant snippets from matching comments with their IDs."""
+
 
 # Create singleton instance for easy import
 prompts = ReggiePrompts()
