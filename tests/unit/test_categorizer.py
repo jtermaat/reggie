@@ -24,12 +24,14 @@ class TestCategorizerInitialization:
 
     def test_categorizer_initialization_with_api_key(self, mocker):
         """Categorizer initializes successfully with API key."""
-        # Mock the LangChain components
-        mocker.patch("reggie.pipeline.categorizer.ChatOpenAI")
+        # Mock the chain creation function
+        mock_chain = mocker.MagicMock()
+        mocker.patch("reggie.pipeline.categorizer.create_categorization_chain", return_value=mock_chain)
 
         # Should not raise
         categorizer = CommentCategorizer(openai_api_key="sk-test-key")
         assert categorizer is not None
+        assert categorizer.chain == mock_chain
 
 
 @pytest.mark.unit
@@ -38,7 +40,8 @@ class TestContextBuilding:
 
     def test_build_comment_context_with_all_fields(self, mocker):
         """Context includes all provided fields."""
-        mocker.patch("reggie.pipeline.categorizer.ChatOpenAI")
+        mock_chain = mocker.MagicMock()
+        mocker.patch("reggie.pipeline.categorizer.create_categorization_chain", return_value=mock_chain)
 
         categorizer = CommentCategorizer(openai_api_key="sk-test-key")
         context = categorizer._build_comment_context(
@@ -54,7 +57,8 @@ class TestContextBuilding:
 
     def test_build_comment_context_with_partial_name(self, mocker):
         """Context handles partial names correctly."""
-        mocker.patch("reggie.pipeline.categorizer.ChatOpenAI")
+        mock_chain = mocker.MagicMock()
+        mocker.patch("reggie.pipeline.categorizer.create_categorization_chain", return_value=mock_chain)
 
         categorizer = CommentCategorizer(openai_api_key="sk-test-key")
         context = categorizer._build_comment_context(
@@ -68,7 +72,8 @@ class TestContextBuilding:
 
     def test_build_comment_context_with_no_metadata(self, mocker):
         """Context works with just comment text."""
-        mocker.patch("reggie.pipeline.categorizer.ChatOpenAI")
+        mock_chain = mocker.MagicMock()
+        mocker.patch("reggie.pipeline.categorizer.create_categorization_chain", return_value=mock_chain)
 
         categorizer = CommentCategorizer(openai_api_key="sk-test-key")
         context = categorizer._build_comment_context(
@@ -81,7 +86,8 @@ class TestContextBuilding:
 
     def test_build_comment_context_organization_only(self, mocker):
         """Context includes organization without name."""
-        mocker.patch("reggie.pipeline.categorizer.ChatOpenAI")
+        mock_chain = mocker.MagicMock()
+        mocker.patch("reggie.pipeline.categorizer.create_categorization_chain", return_value=mock_chain)
 
         categorizer = CommentCategorizer(openai_api_key="sk-test-key")
         context = categorizer._build_comment_context(
@@ -99,7 +105,6 @@ class TestCategorization:
 
     async def test_categorize_returns_classification(self, mocker):
         """Categorize returns CommentClassification on success."""
-        mock_chat = mocker.patch("reggie.pipeline.categorizer.ChatOpenAI")
         mock_classification = CommentClassification(
             category=Category.PHYSICIANS_SURGEONS,
             sentiment=Sentiment.FOR,
@@ -107,9 +112,10 @@ class TestCategorization:
             reasoning="Test reasoning"
         )
 
-        mock_model = AsyncMock()
-        mock_model.ainvoke = AsyncMock(return_value=mock_classification)
-        mock_chat.return_value.with_structured_output.return_value = mock_model
+        # Mock the chain to return our classification
+        mock_chain = AsyncMock()
+        mock_chain.ainvoke = AsyncMock(return_value=mock_classification)
+        mocker.patch("reggie.pipeline.categorizer.create_categorization_chain", return_value=mock_chain)
 
         categorizer = CommentCategorizer(openai_api_key="sk-test-key")
         result = await categorizer.categorize(
@@ -124,12 +130,10 @@ class TestCategorization:
 
     async def test_categorize_error_returns_default(self, mocker):
         """Categorize returns default classification on error."""
-        mock_chat = mocker.patch("reggie.pipeline.categorizer.ChatOpenAI")
-
-        # Mock API failure
-        mock_model = AsyncMock()
-        mock_model.ainvoke = AsyncMock(side_effect=Exception("API Error"))
-        mock_chat.return_value.with_structured_output.return_value = mock_model
+        # Mock chain failure
+        mock_chain = AsyncMock()
+        mock_chain.ainvoke = AsyncMock(side_effect=Exception("API Error"))
+        mocker.patch("reggie.pipeline.categorizer.create_categorization_chain", return_value=mock_chain)
 
         categorizer = CommentCategorizer(openai_api_key="sk-test-key")
         result = await categorizer.categorize(
@@ -149,7 +153,6 @@ class TestBatchCategorization:
 
     async def test_categorize_batch_processes_all_comments(self, mocker):
         """Batch categorization processes all comments."""
-        mock_chat = mocker.patch("reggie.pipeline.categorizer.ChatOpenAI")
         mock_classification = CommentClassification(
             category=Category.PHYSICIANS_SURGEONS,
             sentiment=Sentiment.FOR,
@@ -157,9 +160,9 @@ class TestBatchCategorization:
             reasoning="Test"
         )
 
-        mock_model = AsyncMock()
-        mock_model.ainvoke = AsyncMock(return_value=mock_classification)
-        mock_chat.return_value.with_structured_output.return_value = mock_model
+        mock_chain = AsyncMock()
+        mock_chain.ainvoke = AsyncMock(return_value=mock_classification)
+        mocker.patch("reggie.pipeline.categorizer.create_categorization_chain", return_value=mock_chain)
 
         categorizer = CommentCategorizer(openai_api_key="sk-test-key")
 
@@ -176,8 +179,6 @@ class TestBatchCategorization:
 
     async def test_categorize_batch_handles_mixed_success_failure(self, mocker):
         """Batch categorization handles mixed success/failure."""
-        mock_chat = mocker.patch("reggie.pipeline.categorizer.ChatOpenAI")
-
         # First call succeeds, second fails, third succeeds
         mock_classification = CommentClassification(
             category=Category.PHYSICIANS_SURGEONS,
@@ -186,15 +187,15 @@ class TestBatchCategorization:
             reasoning="Success"
         )
 
-        mock_model = AsyncMock()
-        mock_model.ainvoke = AsyncMock(
+        mock_chain = AsyncMock()
+        mock_chain.ainvoke = AsyncMock(
             side_effect=[
                 mock_classification,
                 Exception("API Error"),
                 mock_classification
             ]
         )
-        mock_chat.return_value.with_structured_output.return_value = mock_model
+        mocker.patch("reggie.pipeline.categorizer.create_categorization_chain", return_value=mock_chain)
 
         categorizer = CommentCategorizer(openai_api_key="sk-test-key")
 
@@ -217,8 +218,8 @@ class TestBatchCategorization:
 
     async def test_categorize_batch_empty_list(self, mocker):
         """Batch categorization handles empty list."""
-        mock_chat = mocker.patch("reggie.pipeline.categorizer.ChatOpenAI")
-        mock_chat.return_value.with_structured_output.return_value = AsyncMock()
+        mock_chain = AsyncMock()
+        mocker.patch("reggie.pipeline.categorizer.create_categorization_chain", return_value=mock_chain)
 
         categorizer = CommentCategorizer(openai_api_key="sk-test-key")
         results = await categorizer.categorize_batch([])
@@ -227,7 +228,6 @@ class TestBatchCategorization:
 
     async def test_categorize_batch_respects_batch_size(self, mocker):
         """Batch categorization respects batch size."""
-        mock_chat = mocker.patch("reggie.pipeline.categorizer.ChatOpenAI")
         mock_classification = CommentClassification(
             category=Category.PHYSICIANS_SURGEONS,
             sentiment=Sentiment.FOR,
@@ -242,9 +242,9 @@ class TestBatchCategorization:
             call_count += 1
             return mock_classification
 
-        mock_model = AsyncMock()
-        mock_model.ainvoke = mock_ainvoke
-        mock_chat.return_value.with_structured_output.return_value = mock_model
+        mock_chain = AsyncMock()
+        mock_chain.ainvoke = mock_ainvoke
+        mocker.patch("reggie.pipeline.categorizer.create_categorization_chain", return_value=mock_chain)
 
         # Mock asyncio.sleep to speed up test
         mocker.patch("asyncio.sleep", new_callable=AsyncMock)

@@ -4,22 +4,23 @@ import logging
 from typing import List, Dict, Any, Literal
 from functools import lru_cache
 
-from langchain_openai import OpenAIEmbeddings, ChatOpenAI
 from langchain_core.messages import HumanMessage, SystemMessage, AIMessage
 from langgraph.graph import StateGraph, END
 
 from ..models.agent import (
-    RelevanceAssessment,
-    RelevantCommentSelection,
-    CommentSnippet,
     RAGState,
     RAGSnippet
 )
-from ..config import AgentConfig
+from ..config import get_config
 from ..db.connection import get_connection
-from ..db.repository import CommentRepository, CommentChunkRepository
+from ..db.repository import CommentRepository
 from ..exceptions import RAGSearchError
-from ..prompts import prompts
+from .chains import (
+    create_vector_search_chain,
+    create_relevance_assessment_chain,
+    create_comment_selection_chain,
+    create_snippet_extraction_chain
+)
 
 logger = logging.getLogger(__name__)
 
@@ -34,9 +35,10 @@ def create_rag_graph() -> StateGraph:
     Returns:
         Compiled StateGraph
     """
-    config = AgentConfig()
-    embeddings = OpenAIEmbeddings(model=config.embeddings_model)
-    llm = ChatOpenAI(model=config.rag_model, temperature=0)
+    # Create reusable LCEL chains
+    relevance_chain = create_relevance_assessment_chain()
+    selection_chain = create_comment_selection_chain()
+    snippet_chain = create_snippet_extraction_chain()
 
     async def generate_query(state: RAGState) -> Dict[str, Any]:
         """Generate or refine the search query based on user's question."""
@@ -70,22 +72,19 @@ def create_rag_graph() -> StateGraph:
         current_query = state.get("current_query", "")
         logger.info(f"Searching vectors with query: {current_query}")
 
-        # Generate embedding for query
-        query_embedding = await embeddings.aembed_query(current_query)
-
-        # Search chunks using repository
+        # Create search chain with current state parameters
         filters = state.get("filters", {})
-        async with get_connection() as conn:
-            results = await CommentChunkRepository.search_by_vector(
-                document_id=state["document_id"],
-                query_embedding=query_embedding,
-                conn=conn,
-                limit=10,
-                sentiment_filter=filters.get("sentiment"),
-                category_filter=filters.get("category"),
-                topics_filter=filters.get("topics"),
-                topic_filter_mode=state.get("topic_filter_mode", "any")
-            )
+        search_chain = create_vector_search_chain(
+            document_id=state["document_id"],
+            limit=10,
+            sentiment_filter=filters.get("sentiment"),
+            category_filter=filters.get("category"),
+            topics_filter=filters.get("topics"),
+            topic_filter_mode=state.get("topic_filter_mode", "any")
+        )
+
+        # Use LCEL chain to search
+        results = await search_chain.ainvoke(current_query)
 
         logger.info(f"Found {len(results)} chunks")
 
@@ -125,16 +124,13 @@ def create_rag_graph() -> StateGraph:
                     f"Comment {comment_id} (chunk {chunk.chunk_index}): {chunk.chunk_text[:200]}..."
                 )
 
-        # Use ChatPromptTemplate for structured message formatting
-        prompt_messages = prompts.RAG_RELEVANCE_ASSESSMENT.invoke({
+        # Use LCEL chain for assessment
+        assessment = await relevance_chain.ainvoke({
             "question": question,
             "chunk_count": len(chunks_summary),
             "comment_count": len(all_retrieved),
             "chunks_summary": chr(10).join(chunks_summary[:20])
         })
-
-        llm_with_structure = llm.with_structured_output(RelevanceAssessment)
-        assessment = await llm_with_structure.ainvoke(prompt_messages)
 
         logger.info(f"Assessment: {assessment.has_enough_information}, reasoning: {assessment.reasoning}")
 
@@ -163,14 +159,11 @@ def create_rag_graph() -> StateGraph:
             combined = " ... ".join(chunk_texts)
             comment_summaries.append(f"Comment ID: {comment_id}\n{combined[:500]}...")
 
-        # Use ChatPromptTemplate for structured message formatting
-        prompt_messages = prompts.RAG_SELECT_COMMENTS.invoke({
+        # Use LCEL chain for selection
+        selection = await selection_chain.ainvoke({
             "question": question,
             "comment_summaries": chr(10).join(comment_summaries)
         })
-
-        llm_with_structure = llm.with_structured_output(RelevantCommentSelection)
-        selection = await llm_with_structure.ainvoke(prompt_messages)
 
         logger.info(f"Selected {len(selection.relevant_comment_ids)} relevant comments")
 
@@ -203,15 +196,11 @@ def create_rag_graph() -> StateGraph:
                     logger.warning(f"No text found for comment {comment_id}")
                     continue
 
-                # Use ChatPromptTemplate for structured message formatting
-                prompt_messages = prompts.RAG_EXTRACT_SNIPPET.invoke({
+                # Use LCEL chain for snippet extraction
+                snippet_obj = await snippet_chain.ainvoke({
                     "question": question,
                     "full_text": full_text
                 })
-
-                llm_with_structure = llm.with_structured_output(CommentSnippet)
-
-                snippet_obj = await llm_with_structure.ainvoke(prompt_messages)
 
                 # Validate that snippet is actually in the comment
                 if not snippet_obj.snippet.strip():
@@ -312,7 +301,7 @@ async def run_rag_search(
         List of RAGSnippet objects
     """
     graph = create_rag_graph()
-    config = AgentConfig()
+    config = get_config()
 
     initial_state: RAGState = {
         "document_id": document_id,

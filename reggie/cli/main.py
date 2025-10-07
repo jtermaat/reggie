@@ -13,7 +13,7 @@ from rich.progress import Progress, SpinnerColumn, TextColumn
 
 from ..db import init_db
 from ..pipeline import DocumentLoader, CommentProcessor
-from ..config import setup_langsmith
+from ..config import get_config
 from ..logging_config import setup_logging
 
 # Load environment variables
@@ -23,7 +23,8 @@ load_dotenv()
 setup_logging(level=os.getenv("LOG_LEVEL", "INFO"))
 
 # Setup LangSmith if configured
-setup_langsmith()
+config = get_config()
+config.apply_langsmith()
 
 console = Console()
 

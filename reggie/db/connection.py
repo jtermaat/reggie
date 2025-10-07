@@ -5,13 +5,13 @@ from contextlib import asynccontextmanager
 import psycopg
 from psycopg import sql
 
-from ..config import DatabaseConfig
+from ..config import get_config
 
 
 def get_connection_string() -> str:
     """Get PostgreSQL connection string from environment variables."""
-    db_config = DatabaseConfig()
-    return db_config.connection_string
+    config = get_config()
+    return config.connection_string
 
 
 @asynccontextmanager

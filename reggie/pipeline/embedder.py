@@ -8,7 +8,7 @@ import tiktoken
 from langchain_openai import OpenAIEmbeddings
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 
-from ..config import setup_langsmith, APIConfig, EmbeddingConfig
+from ..config import get_config
 from ..exceptions import ConfigurationException
 
 logger = logging.getLogger(__name__)
@@ -30,22 +30,21 @@ class CommentEmbedder:
             chunk_size: Target size for text chunks in tokens. If None, uses config default.
             chunk_overlap: Number of tokens to overlap between chunks. If None, uses config default.
         """
-        api_config = APIConfig()
-        embedding_config = EmbeddingConfig()
+        config = get_config()
 
-        api_key = openai_api_key or api_config.openai_api_key
+        api_key = openai_api_key or config.openai_api_key
         if not api_key:
             raise ConfigurationException(
                 "OPENAI_API_KEY must be set in environment or .env file"
             )
 
         # Use config values if not provided
-        chunk_size = chunk_size or embedding_config.chunk_size
-        chunk_overlap = chunk_overlap or embedding_config.chunk_overlap
+        chunk_size = chunk_size or config.chunk_size
+        chunk_overlap = chunk_overlap or config.chunk_overlap
 
         # Store config values
-        self.embedding_model = embedding_config.embedding_model
-        self.embedding_dimension = embedding_config.embedding_dimension
+        self.embedding_model = config.embedding_model
+        self.embedding_dimension = config.embedding_dimension
 
         # Initialize OpenAI embeddings
         self.embeddings = OpenAIEmbeddings(

@@ -2,47 +2,52 @@
 
 import os
 from typing import Optional
+from pydantic import Field
 from pydantic_settings import BaseSettings
 
 
-class APIConfig(BaseSettings):
-    """Configuration for external APIs.
+class ReggieConfig(BaseSettings):
+    """Unified configuration for reggie application."""
 
-    All settings can be overridden via environment variables.
-    For example: REG_API_KEY, OPENAI_API_KEY, etc.
-    """
+    # Database
+    postgres_host: str = Field(default="localhost")
+    postgres_port: int = Field(default=5432)
+    postgres_db: str = Field(default="reggie")
+    postgres_user: str = Field(default="postgres")
+    postgres_password: str = Field(default="")
 
-    # Regulations.gov API
-    reg_api_key: str = "DEMO_KEY"
-    reg_api_base_url: str = "https://api.regulations.gov/v4"
-    reg_api_request_delay: float = 4.0  # seconds between requests
+    # API - Regulations.gov
+    reg_api_key: str = Field(default="DEMO_KEY")
+    reg_api_base_url: str = Field(default="https://api.regulations.gov/v4")
+    reg_api_request_delay: float = Field(default=4.0)
 
-    # OpenAI API
-    openai_api_key: str  # Required - no default
+    # API - OpenAI
+    openai_api_key: str = Field()  # Required - no default
+
+    # Embeddings
+    embedding_model: str = Field(default="text-embedding-3-small")
+    embedding_dimension: int = Field(default=1536)
+    chunk_size: int = Field(default=1000)
+    chunk_overlap: int = Field(default=200)
+
+    # Processing
+    categorization_model: str = Field(default="gpt-4o-mini")
+    default_batch_size: int = Field(default=10)
+    commit_every: int = Field(default=10)
+
+    # Agent
+    discussion_model: str = Field(default="gpt-4o-mini")
+    rag_model: str = Field(default="gpt-4o-mini")
+    temperature: float = Field(default=0.7)
+    max_tokens: int = Field(default=4000)
+    embeddings_model: str = Field(default="text-embedding-3-small")
+    max_rag_iterations: int = Field(default=3)
 
     # LangSmith
-    langsmith_api_key: Optional[str] = None
-    langsmith_project: str = "reggie"
-    langsmith_tracing: bool = False
-
-    class Config:
-        """Pydantic settings configuration."""
-        env_file = ".env"
-        env_file_encoding = "utf-8"
-        case_sensitive = False
-        # Allow reading from environment variables
-        env_prefix = ""
-        extra = "ignore"
-
-
-class DatabaseConfig(BaseSettings):
-    """Configuration for database connection."""
-
-    postgres_host: str = "localhost"
-    postgres_port: int = 5432
-    postgres_db: str = "reggie"
-    postgres_user: str = "postgres"
-    postgres_password: str = ""
+    langsmith_enabled: bool = Field(default=False)
+    langsmith_project: str = Field(default="reggie")
+    langsmith_tracing: bool = Field(default=False)
+    langsmith_api_key: Optional[str] = Field(default=None)
 
     class Config:
         """Pydantic settings configuration."""
@@ -56,80 +61,25 @@ class DatabaseConfig(BaseSettings):
         """Get PostgreSQL connection string."""
         return f"postgresql://{self.postgres_user}:{self.postgres_password}@{self.postgres_host}:{self.postgres_port}/{self.postgres_db}"
 
-
-class EmbeddingConfig(BaseSettings):
-    """Configuration for embeddings."""
-
-    embedding_model: str = "text-embedding-3-small"
-    embedding_dimension: int = 1536
-    chunk_size: int = 1000
-    chunk_overlap: int = 200
-
-    class Config:
-        """Pydantic settings configuration."""
-        env_file = ".env"
-        env_file_encoding = "utf-8"
-        case_sensitive = False
-        extra = "ignore"
+    def apply_langsmith(self) -> None:
+        """Apply LangSmith configuration to environment if enabled."""
+        if self.langsmith_enabled and self.langsmith_api_key:
+            os.environ["LANGCHAIN_TRACING_V2"] = str(self.langsmith_tracing).lower()
+            os.environ["LANGCHAIN_PROJECT"] = self.langsmith_project
+            os.environ["LANGSMITH_API_KEY"] = self.langsmith_api_key
 
 
-class ProcessingConfig(BaseSettings):
-    """Configuration for processing."""
-
-    categorization_model: str = "gpt-5-nano"
-    default_batch_size: int = 10
-    commit_every: int = 10
-
-    class Config:
-        """Pydantic settings configuration."""
-        env_file = ".env"
-        env_file_encoding = "utf-8"
-        case_sensitive = False
-        extra = "ignore"
+# Singleton pattern for configuration
+_config: Optional[ReggieConfig] = None
 
 
-class AgentConfig(BaseSettings):
-    """Configuration for AI agents."""
+def get_config() -> ReggieConfig:
+    """Get application configuration (singleton).
 
-    discussion_model: str = "gpt-4o-mini"
-    rag_model: str = "gpt-4o-mini"
-    temperature: float = 0.7
-    max_tokens: int = 4000
-    embeddings_model: str = "text-embedding-3-small"
-    max_rag_iterations: int = 3
-
-    class Config:
-        """Pydantic settings configuration."""
-        env_file = ".env"
-        env_file_encoding = "utf-8"
-        case_sensitive = False
-        extra = "ignore"
-
-
-def setup_langsmith(
-    api_key: Optional[str] = None,
-    project: Optional[str] = None,
-) -> None:
-    """Configure LangSmith tracing.
-
-    Args:
-        api_key: LangSmith API key. If None, reads from LANGSMITH_API_KEY env var.
-        project: LangSmith project name. If None, reads from LANGSMITH_PROJECT env var
-                 or defaults to 'reggie'.
+    Returns:
+        ReggieConfig instance
     """
-    # Set LangSmith API key
-    if api_key:
-        os.environ["LANGSMITH_API_KEY"] = api_key
-    elif not os.getenv("LANGSMITH_API_KEY"):
-        # LangSmith is optional - just disable tracing if not configured
-        os.environ["LANGSMITH_TRACING"] = "false"
-        return
-
-    # Set project name
-    if project:
-        os.environ["LANGSMITH_PROJECT"] = project
-    elif not os.getenv("LANGSMITH_PROJECT"):
-        os.environ["LANGSMITH_PROJECT"] = "reggie"
-
-    # Enable tracing
-    os.environ["LANGSMITH_TRACING"] = "true"
+    global _config
+    if _config is None:
+        _config = ReggieConfig()
+    return _config

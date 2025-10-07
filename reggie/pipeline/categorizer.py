@@ -4,18 +4,16 @@ import asyncio
 import logging
 from typing import Dict, Optional
 
-from langchain_openai import ChatOpenAI
-
-from ..config import setup_langsmith, APIConfig, ProcessingConfig
-from ..models import CommentClassification, Category, Sentiment
+from ..config import get_config
+from ..models import CommentClassification, Category, Sentiment, Topic
 from ..exceptions import ConfigurationException
-from ..prompts import prompts
+from ..agent.chains import create_categorization_chain
 
 logger = logging.getLogger(__name__)
 
 
 class CommentCategorizer:
-    """LangChain-based comment categorizer using structured output."""
+    """LangChain-based comment categorizer using LCEL chains."""
 
     def __init__(self, openai_api_key: Optional[str] = None):
         """Initialize the categorizer.
@@ -23,23 +21,16 @@ class CommentCategorizer:
         Args:
             openai_api_key: OpenAI API key. If None, reads from config/env.
         """
-        api_config = APIConfig()
-        processing_config = ProcessingConfig()
+        config = get_config()
 
-        api_key = openai_api_key or api_config.openai_api_key
+        api_key = openai_api_key or config.openai_api_key
         if not api_key:
             raise ConfigurationException(
                 "OPENAI_API_KEY must be set in environment or .env file"
             )
 
-        # Initialize LangChain model with structured output
-        base_model = ChatOpenAI(
-            model=processing_config.categorization_model,
-            api_key=api_key
-        )
-
-        # Bind structured output schema
-        self.model = base_model.with_structured_output(CommentClassification)
+        # Create LCEL chain for categorization
+        self.chain = create_categorization_chain()
 
     def _build_comment_context(
         self,
@@ -99,9 +90,8 @@ class CommentCategorizer:
         )
 
         try:
-            # Use PromptTemplate to format the prompt with context
-            formatted_prompt = prompts.CATEGORIZATION.format(context=context)
-            result = await self.model.ainvoke(formatted_prompt)
+            # Use LCEL chain: context -> prompt | llm
+            result = await self.chain.ainvoke({"context": context})
             return result
         except Exception as e:
             logger.error(f"Error categorizing comment: {e}")

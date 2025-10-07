@@ -10,7 +10,7 @@ from tenacity import (
 )
 import httpx
 
-from ..config import APIConfig
+from ..config import get_config
 
 
 class RegulationsAPIClient:
@@ -22,7 +22,7 @@ class RegulationsAPIClient:
         Args:
             api_key: API key for regulations.gov. If None, reads from config/env.
         """
-        config = APIConfig()
+        config = get_config()
         self.api_key = api_key or config.reg_api_key
         self.base_url = config.reg_api_base_url
         self.request_delay = config.reg_api_request_delay

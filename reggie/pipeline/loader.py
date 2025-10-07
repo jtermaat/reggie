@@ -9,7 +9,6 @@ import psycopg
 
 from ..api import RegulationsAPIClient
 from ..db import get_connection_string, DocumentRepository, CommentRepository
-from ..config import setup_langsmith
 
 logger = logging.getLogger(__name__)
 

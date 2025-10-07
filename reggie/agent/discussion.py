@@ -7,9 +7,9 @@ from pathlib import Path
 from langchain_openai import ChatOpenAI
 from langchain_core.messages import HumanMessage, AIMessage
 from langgraph.prebuilt import create_react_agent
-from langgraph.checkpoint.sqlite import SqliteSaver
+from langgraph.checkpoint.memory import MemorySaver
 
-from ..config import AgentConfig
+from ..config import get_config
 from ..exceptions import AgentInvocationError
 from ..prompts import prompts
 from .tools import create_discussion_tools
@@ -54,8 +54,7 @@ class DiscussionAgent:
         document_id: str,
         checkpoint_dir: str = ".checkpoints",
         model: str = None,
-        temperature: float = None,
-        config: AgentConfig = None
+        temperature: float = None
     ) -> "DiscussionAgent":
         """Factory method to create a DiscussionAgent with default configuration.
 
@@ -64,13 +63,11 @@ class DiscussionAgent:
             checkpoint_dir: Directory for storing conversation checkpoints
             model: OpenAI model to use (overrides config)
             temperature: Temperature for the model (overrides config)
-            config: AgentConfig instance (creates default if not provided)
 
         Returns:
             Configured DiscussionAgent instance
         """
-        if config is None:
-            config = AgentConfig()
+        config = get_config()
 
         llm = ChatOpenAI(
             model=model or config.discussion_model,
@@ -89,7 +86,7 @@ class DiscussionAgent:
         checkpoint_path.mkdir(parents=True, exist_ok=True)
 
         db_path = checkpoint_path / f"discussion_{self.document_id}.db"
-        self.checkpointer = SqliteSaver.from_conn_string(str(db_path))
+        self.checkpointer = MemorySaver()
         logger.info(f"Initialized checkpointing at {db_path}")
 
     def _create_graph(self):

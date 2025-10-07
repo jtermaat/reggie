@@ -42,12 +42,12 @@ async def test_db() -> AsyncGenerator[AsyncConnection, None]:
     Creates a test database, initializes schema, yields connection,
     then drops all tables after the test.
     """
-    from reggie.config import DatabaseConfig
+    from reggie.config import get_config
     from reggie.db import init_db
 
     # Use test database
-    db_config = DatabaseConfig()
-    conn_string = db_config.connection_string
+    config = get_config()
+    conn_string = config.connection_string
 
     # Initialize database schema
     await init_db(conn_string)
