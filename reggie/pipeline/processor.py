@@ -1,20 +1,22 @@
-"""Comment processor for categorization and embedding"""
+"""Comment processor for categorization and embedding
+
+This module provides backward compatibility while delegating to the orchestrator.
+"""
 
 import logging
 from typing import Optional
-from datetime import datetime
 
-import psycopg
-
-from .categorizer import CommentCategorizer
-from .embedder import CommentEmbedder
-from ..db import get_connection_string, CommentRepository, CommentChunkRepository
+from .orchestrator import PipelineOrchestrator
 
 logger = logging.getLogger(__name__)
 
 
 class CommentProcessor:
-    """Processes comments: categorizes and embeds them."""
+    """Processes comments: categorizes and embeds them.
+
+    This class now delegates to PipelineOrchestrator for actual processing.
+    It's maintained for backward compatibility with existing code.
+    """
 
     def __init__(
         self,
@@ -27,10 +29,10 @@ class CommentProcessor:
             openai_api_key: OpenAI API key
             connection_string: PostgreSQL connection string
         """
-        self.categorizer = CommentCategorizer(openai_api_key=openai_api_key)
-        self.embedder = CommentEmbedder(openai_api_key=openai_api_key)
-        self.connection_string = connection_string or get_connection_string()
-
+        self.orchestrator = PipelineOrchestrator.create(
+            openai_api_key=openai_api_key,
+            connection_string=connection_string,
+        )
 
     async def process_comments(
         self,
@@ -50,113 +52,8 @@ class CommentProcessor:
         Returns:
             Statistics about the processing
         """
-        logger.info(f"Processing comments for document {document_id}")
-
-        stats = {
-            "document_id": document_id,
-            "comments_processed": 0,
-            "chunks_created": 0,
-            "errors": 0,
-            "start_time": datetime.now(),
-        }
-
-        try:
-            conn = await psycopg.AsyncConnection.connect(self.connection_string)
-
-            try:
-                # Fetch comments from database
-                rows = await CommentRepository.get_comments_for_document(
-                    document_id, conn, skip_processed=skip_processed
-                )
-
-                if not rows:
-                    if skip_processed:
-                        logger.info(f"No unprocessed comments found for document {document_id}")
-                    else:
-                        logger.warning(f"No comments found for document {document_id}")
-                    return stats
-
-                logger.info(f"Found {len(rows)} comments to process")
-
-                # Process in batches
-                for i in range(0, len(rows), batch_size):
-                    batch_rows = rows[i:i + batch_size]
-
-                    # Prepare comment data
-                    comment_data_list = []
-                    for row in batch_rows:
-                        comment_data_list.append({
-                            "id": row[0],
-                            "comment_text": row[1] or "",
-                            "first_name": row[2],
-                            "last_name": row[3],
-                            "organization": row[4],
-                        })
-
-                    # Categorize the batch
-                    classifications = await self.categorizer.categorize_batch(
-                        comment_data_list, batch_size=len(comment_data_list)
-                    )
-
-                    # Chunk and embed the batch
-                    all_chunks = await self.embedder.process_comments_batch(
-                        comment_data_list, batch_size=len(comment_data_list)
-                    )
-
-                    # Update database with classifications and embeddings
-                    for j, comment_data in enumerate(comment_data_list):
-                        try:
-                            classification = classifications[j]
-                            chunks_with_embeddings = all_chunks[j]
-
-                            # Update comment with classification
-                            await CommentRepository.update_comment_classification(
-                                comment_data["id"],
-                                classification.category.value,
-                                classification.sentiment.value,
-                                [topic.value for topic in classification.topics],
-                                conn,
-                            )
-
-                            # Store chunks and embeddings
-                            await CommentChunkRepository.store_comment_chunks(
-                                comment_data["id"],
-                                chunks_with_embeddings,
-                                conn,
-                            )
-
-                            stats["comments_processed"] += 1
-                            stats["chunks_created"] += len(chunks_with_embeddings)
-
-                        except Exception as e:
-                            logger.error(f"Error processing comment {comment_data['id']}: {e}")
-                            stats["errors"] += 1
-
-                    # Commit after each batch
-                    await conn.commit()
-                    logger.info(
-                        f"Processed {min(i + batch_size, len(rows))}/{len(rows)} comments "
-                        f"({stats['chunks_created']} chunks total)"
-                    )
-
-            finally:
-                await conn.close()
-
-        except Exception as e:
-            logger.error(f"Error processing comments: {e}")
-            stats["errors"] += 1
-            raise
-
-        finally:
-            stats["end_time"] = datetime.now()
-            stats["duration"] = (stats["end_time"] - stats["start_time"]).total_seconds()
-
-        logger.info(
-            f"Completed processing {document_id}: "
-            f"{stats['comments_processed']} comments, "
-            f"{stats['chunks_created']} chunks, "
-            f"{stats['errors']} errors, "
-            f"{stats['duration']:.1f}s"
+        return await self.orchestrator.process_comments(
+            document_id=document_id,
+            batch_size=batch_size,
+            skip_processed=skip_processed,
         )
-
-        return stats
