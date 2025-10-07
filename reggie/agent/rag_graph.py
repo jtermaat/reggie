@@ -1,69 +1,23 @@
 """RAG sub-agent graph for retrieving relevant comment snippets."""
 
 import logging
-from typing import List, Dict, Any, Annotated, Literal
-from operator import add
+from typing import List, Dict, Any, Literal
 
 from langchain_openai import OpenAIEmbeddings, ChatOpenAI
-from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage, AIMessage
+from langchain_core.messages import HumanMessage, SystemMessage, AIMessage
 from langgraph.graph import StateGraph, END
-from pydantic import BaseModel, Field
 
-from .tools import search_comment_chunks, get_full_comment_text
+from ..models.agent import (
+    RelevanceAssessment,
+    RelevantCommentSelection,
+    CommentSnippet,
+    RAGState
+)
+from ..db.connection import get_connection
+from ..db.repository import CommentRepository, CommentChunkRepository
+from ..exceptions import RAGSearchError
 
 logger = logging.getLogger(__name__)
-
-
-class RelevanceAssessment(BaseModel):
-    """Assessment of whether enough relevant information has been found."""
-
-    has_enough_information: bool = Field(
-        description="True if the retrieved chunks contain enough information to answer the question"
-    )
-    reasoning: str = Field(
-        description="Brief explanation of why we do or don't have enough information"
-    )
-    needs_different_query: bool = Field(
-        description="True if we should try a different search query to find more relevant information"
-    )
-    suggested_query: str = Field(
-        default="",
-        description="If needs_different_query is True, suggest a new query to try"
-    )
-
-
-class RelevantCommentSelection(BaseModel):
-    """Selection of which comments contain relevant information."""
-
-    relevant_comment_ids: List[str] = Field(
-        description="List of comment IDs that contain relevant information to answer the question"
-    )
-    reasoning: str = Field(
-        description="Brief explanation of why these comments are relevant"
-    )
-
-
-class CommentSnippet(BaseModel):
-    """A snippet extracted from a comment."""
-
-    snippet: str = Field(
-        description="The exact text from the comment that is relevant to the question"
-    )
-
-
-class RAGState(BaseModel):
-    """State for the RAG graph."""
-
-    document_id: str
-    messages: Annotated[List[BaseMessage], add]
-    filters: Dict[str, Any] = Field(default_factory=dict)
-    topic_filter_mode: str = "any"
-    current_query: str = ""
-    search_results: List[Dict[str, Any]] = Field(default_factory=list)
-    all_retrieved_chunks: Dict[str, List[Dict[str, Any]]] = Field(default_factory=dict)  # comment_id -> chunks
-    final_snippets: List[Dict[str, str]] = Field(default_factory=list)  # List of {comment_id, snippet}
-    iteration_count: int = 0
-    max_iterations: int = 3
 
 
 def create_rag_graph(embeddings_model: str = "text-embedding-3-small") -> StateGraph:
@@ -113,16 +67,23 @@ def create_rag_graph(embeddings_model: str = "text-embedding-3-small") -> StateG
         # Generate embedding for query
         query_embedding = await embeddings.aembed_query(state.current_query)
 
-        # Search chunks
-        results = await search_comment_chunks(
-            document_id=state.document_id,
-            query_embedding=query_embedding,
-            limit=10,
-            filters=state.filters,
-            topic_filter_mode=state.topic_filter_mode
-        )
+        # Search chunks using repository
+        async with get_connection() as conn:
+            results = await CommentChunkRepository.search_by_vector(
+                document_id=state.document_id,
+                query_embedding=query_embedding,
+                conn=conn,
+                limit=10,
+                sentiment_filter=state.filters.get("sentiment"),
+                category_filter=state.filters.get("category"),
+                topics_filter=state.filters.get("topics"),
+                topic_filter_mode=state.topic_filter_mode
+            )
 
         logger.info(f"Found {len(results)} chunks")
+
+        if not results and state.iteration_count == 0:
+            raise RAGSearchError(f"No comment chunks found for query: {state.current_query}")
 
         # Organize by comment_id
         for result in results:
@@ -237,55 +198,51 @@ Which comment IDs contain relevant information?"""
 
         snippets = []
 
-        for comment_id in relevant_ids:
-            # Get full comment text
-            full_text = await get_full_comment_text(comment_id)
+        async with get_connection() as conn:
+            for comment_id in relevant_ids:
+                # Get full comment text using repository
+                full_text = await CommentRepository.get_full_text(comment_id, conn)
 
-            if not full_text:
-                continue
+                if not full_text:
+                    logger.warning(f"No text found for comment {comment_id}")
+                    continue
 
-            system_msg = """You are extracting the relevant portion of a comment that helps answer the user's question.
+                system_msg = """You are extracting the relevant portion of a comment that helps answer the user's question.
 
 Extract the exact text from the comment that is relevant. The snippet should be a direct quote from the comment text."""
 
-            user_msg = f"""Question: {question}
+                user_msg = f"""Question: {question}
 
 Comment text:
 {full_text}
 
 Extract the portion of this comment that is relevant to answering the question."""
 
-            llm_with_structure = llm.with_structured_output(CommentSnippet)
+                llm_with_structure = llm.with_structured_output(CommentSnippet)
 
-            try:
                 snippet_obj = await llm_with_structure.ainvoke([
                     SystemMessage(content=system_msg),
                     HumanMessage(content=user_msg)
                 ])
 
                 # Validate that snippet is actually in the comment
-                if snippet_obj.snippet.strip() and snippet_obj.snippet in full_text:
-                    snippets.append({
-                        "comment_id": comment_id,
-                        "snippet": snippet_obj.snippet
-                    })
-                else:
-                    # Retry logic or just use first 500 chars as fallback
-                    logger.warning(f"Snippet not found in comment {comment_id}, using excerpt")
-                    snippets.append({
-                        "comment_id": comment_id,
-                        "snippet": full_text[:500] + "..."
-                    })
+                if not snippet_obj.snippet.strip():
+                    logger.warning(f"Empty snippet returned for comment {comment_id}")
+                    continue
 
-            except Exception as e:
-                logger.error(f"Error extracting snippet from comment {comment_id}: {e}")
-                # Use excerpt as fallback
+                if snippet_obj.snippet not in full_text:
+                    logger.warning(f"Snippet not found in comment {comment_id}, skipping")
+                    continue
+
                 snippets.append({
                     "comment_id": comment_id,
-                    "snippet": full_text[:500] + "..."
+                    "snippet": snippet_obj.snippet
                 })
 
         logger.info(f"Extracted {len(snippets)} snippets")
+
+        if not snippets:
+            raise RAGSearchError("Failed to extract any valid snippets from comments")
 
         return {
             "final_snippets": snippets,

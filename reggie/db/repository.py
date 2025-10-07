@@ -233,6 +233,144 @@ class CommentRepository:
                 )
             return await cur.fetchall()
 
+    @staticmethod
+    def _build_filter_clause(
+        document_id: str,
+        sentiment_filter: Optional[str] = None,
+        category_filter: Optional[str] = None,
+        topics_filter: Optional[List[str]] = None,
+        topic_filter_mode: str = "any"
+    ) -> Tuple[str, List]:
+        """Build WHERE clause and parameters for filtering comments.
+
+        Args:
+            document_id: Document ID (required)
+            sentiment_filter: Filter by sentiment
+            category_filter: Filter by category
+            topics_filter: Filter by topics
+            topic_filter_mode: 'any' or 'all' for topic filtering
+
+        Returns:
+            Tuple of (where_clause, params)
+        """
+        where_clauses = ["document_id = %s"]
+        params = [document_id]
+
+        if sentiment_filter:
+            where_clauses.append("sentiment = %s")
+            params.append(sentiment_filter)
+
+        if category_filter:
+            where_clauses.append("category = %s")
+            params.append(category_filter)
+
+        if topics_filter:
+            if topic_filter_mode == "all":
+                where_clauses.append("topics @> %s::text[]")
+            else:  # any
+                where_clauses.append("topics && %s::text[]")
+            params.append(topics_filter)
+
+        return " AND ".join(where_clauses), params
+
+    @staticmethod
+    async def get_statistics(
+        document_id: str,
+        group_by: str,
+        conn,
+        sentiment_filter: Optional[str] = None,
+        category_filter: Optional[str] = None,
+        topics_filter: Optional[List[str]] = None,
+        topic_filter_mode: str = "any"
+    ) -> Dict:
+        """Get statistical breakdown of comments.
+
+        Args:
+            document_id: Document ID
+            group_by: What to group by - 'sentiment', 'category', or 'topic'
+            conn: Database connection
+            sentiment_filter: Optional sentiment filter
+            category_filter: Optional category filter
+            topics_filter: Optional topics filter
+            topic_filter_mode: 'any' or 'all' for topic filtering
+
+        Returns:
+            Dict with total_comments and breakdown list
+
+        Raises:
+            ValueError: If group_by is not valid
+        """
+        if group_by not in ["sentiment", "category", "topic"]:
+            raise ValueError("group_by must be 'sentiment', 'category', or 'topic'")
+
+        where_clause, params = CommentRepository._build_filter_clause(
+            document_id, sentiment_filter, category_filter, topics_filter, topic_filter_mode
+        )
+
+        async with conn.cursor() as cur:
+            # Get total count
+            await cur.execute(
+                f"SELECT COUNT(*) FROM comments WHERE {where_clause}",
+                params
+            )
+            total = (await cur.fetchone())[0]
+
+            # Get breakdown
+            if group_by == "topic":
+                # Unnest topics array for counting
+                query = f"""
+                    SELECT topic as value, COUNT(*) as count
+                    FROM comments, UNNEST(topics) as topic
+                    WHERE {where_clause}
+                    GROUP BY topic
+                    ORDER BY count DESC
+                """
+            else:
+                # Simple grouping
+                query = f"""
+                    SELECT {group_by} as value, COUNT(*) as count
+                    FROM comments
+                    WHERE {where_clause}
+                    GROUP BY {group_by}
+                    ORDER BY count DESC
+                """
+
+            await cur.execute(query, params)
+            rows = await cur.fetchall()
+
+            breakdown = []
+            for row in rows:
+                value, count = row
+                breakdown.append({
+                    "value": value or "unknown",
+                    "count": count,
+                    "percentage": round((count / total * 100) if total > 0 else 0, 1)
+                })
+
+            return {
+                "total_comments": total,
+                "breakdown": breakdown
+            }
+
+    @staticmethod
+    async def get_full_text(comment_id: str, conn) -> str:
+        """Get the full text of a comment.
+
+        Args:
+            comment_id: Comment ID
+            conn: Database connection
+
+        Returns:
+            The full comment text, or empty string if not found
+        """
+        async with conn.cursor() as cur:
+            await cur.execute(
+                "SELECT comment_text FROM comments WHERE id = %s",
+                (comment_id,)
+            )
+            row = await cur.fetchone()
+            return row[0] if row else ""
+
 
 class CommentChunkRepository:
     """Repository for comment chunk and embedding operations."""
@@ -280,3 +418,75 @@ class CommentChunkRepository:
                     """,
                     (comment_id, chunk_text, idx, embedding),
                 )
+
+    @staticmethod
+    async def search_by_vector(
+        document_id: str,
+        query_embedding: List[float],
+        conn,
+        limit: int = 10,
+        sentiment_filter: Optional[str] = None,
+        category_filter: Optional[str] = None,
+        topics_filter: Optional[List[str]] = None,
+        topic_filter_mode: str = "any"
+    ) -> List[Dict]:
+        """Search comment chunks using vector similarity.
+
+        Args:
+            document_id: Document ID to search within
+            query_embedding: Embedding vector for the query
+            conn: Database connection
+            limit: Maximum number of chunks to return
+            sentiment_filter: Optional sentiment filter
+            category_filter: Optional category filter
+            topics_filter: Optional topics filter
+            topic_filter_mode: 'any' or 'all' for topic filtering
+
+        Returns:
+            List of chunks with metadata
+        """
+        # Build filter clause for comments table
+        where_clause, params = CommentRepository._build_filter_clause(
+            document_id, sentiment_filter, category_filter, topics_filter, topic_filter_mode
+        )
+
+        # Add embedding and limit to params
+        params.append(query_embedding)
+        params.append(limit)
+
+        query = f"""
+            SELECT
+                cc.comment_id,
+                cc.chunk_text,
+                cc.chunk_index,
+                cc.embedding <=> %s::vector as distance,
+                c.sentiment,
+                c.category,
+                c.topics
+            FROM comment_chunks cc
+            JOIN comments c ON cc.comment_id = c.id
+            WHERE {where_clause}
+            ORDER BY cc.embedding <=> %s::vector
+            LIMIT %s
+        """
+
+        # Need to add embedding twice (once for distance calc, once for ordering)
+        params_with_dup = params[:-2] + [query_embedding, query_embedding] + [params[-1]]
+
+        async with conn.cursor() as cur:
+            await cur.execute(query, params_with_dup)
+            rows = await cur.fetchall()
+
+            results = []
+            for row in rows:
+                results.append({
+                    "comment_id": row[0],
+                    "chunk_text": row[1],
+                    "chunk_index": row[2],
+                    "distance": float(row[3]),
+                    "sentiment": row[4],
+                    "category": row[5],
+                    "topics": row[6] or []
+                })
+
+            return results

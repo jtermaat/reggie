@@ -29,3 +29,28 @@ class ConfigurationException(ReggieException):
 class ValidationException(ReggieException):
     """Exception raised for data validation errors."""
     pass
+
+
+class AgentException(ReggieException):
+    """Base exception for agent-related errors."""
+    pass
+
+
+class DocumentNotFoundError(AgentException):
+    """Exception raised when a document is not found."""
+    pass
+
+
+class NoProcessedCommentsError(AgentException):
+    """Exception raised when a document has no processed comments."""
+    pass
+
+
+class RAGSearchError(AgentException):
+    """Exception raised when RAG search fails."""
+    pass
+
+
+class AgentInvocationError(AgentException):
+    """Exception raised when agent invocation fails."""
+    pass

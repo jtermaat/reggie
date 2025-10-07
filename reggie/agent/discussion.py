@@ -1,14 +1,15 @@
 """Main discussion agent for interactive document exploration."""
 
 import logging
-from typing import Optional
 
 from langchain_openai import ChatOpenAI
-from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
+from langchain_core.messages import HumanMessage, AIMessage
 from langchain_core.tools import tool
 from langgraph.prebuilt import create_react_agent
 
-from .tools import get_comment_statistics
+from ..db.connection import get_connection
+from ..db.repository import CommentRepository
+from ..exceptions import AgentInvocationError, RAGSearchError
 from .rag_graph import run_rag_search
 
 logger = logging.getLogger(__name__)
@@ -39,15 +40,16 @@ class DiscussionAgent:
         self.llm = ChatOpenAI(model=model, temperature=temperature)
         self.graph = self._create_graph()
 
-    def _create_tools(self):
-        """Create the tools for the agent."""
+    def _create_graph(self):
+        """Create the agent graph using LangGraph's prebuilt ReAct agent."""
 
+        # Create tools with document_id bound in closure
         @tool
         async def get_statistics(
             group_by: str,
-            sentiment_filter: Optional[str] = None,
-            category_filter: Optional[str] = None,
-            topics_filter: Optional[list] = None,
+            sentiment_filter: str = None,
+            category_filter: str = None,
+            topics_filter: list = None,
             topic_filter_mode: str = "any"
         ) -> str:
             """Get statistical breakdown of comments.
@@ -64,33 +66,19 @@ class DiscussionAgent:
 
             Returns:
                 A formatted string with the statistical breakdown
-
-            Examples:
-                - "What is the sentiment breakdown among physicians?"
-                  get_statistics(group_by="sentiment", category_filter="Physicians & Surgeons")
-
-                - "What categories of people wrote about health equity?"
-                  get_statistics(group_by="category", topics_filter=["health_equity"])
-
-                - "Among people against the regulation, what topics do they discuss?"
-                  get_statistics(group_by="topic", sentiment_filter="against")
             """
-            filters = {}
-            if sentiment_filter:
-                filters["sentiment"] = sentiment_filter
-            if category_filter:
-                filters["category"] = category_filter
-            if topics_filter:
-                filters["topics"] = topics_filter
+            async with get_connection() as conn:
+                result = await CommentRepository.get_statistics(
+                    document_id=self.document_id,
+                    group_by=group_by,
+                    conn=conn,
+                    sentiment_filter=sentiment_filter,
+                    category_filter=category_filter,
+                    topics_filter=topics_filter,
+                    topic_filter_mode=topic_filter_mode
+                )
 
-            result = await get_comment_statistics(
-                document_id=self.document_id,
-                group_by=group_by,
-                filters=filters,
-                topic_filter_mode=topic_filter_mode
-            )
-
-            # Format the result nicely
+            # Format the result
             output = [f"Total comments matching filters: {result['total_comments']}\n"]
             output.append(f"Breakdown by {group_by}:")
 
@@ -104,9 +92,9 @@ class DiscussionAgent:
         @tool
         async def search_comments(
             query: str,
-            sentiment_filter: Optional[str] = None,
-            category_filter: Optional[str] = None,
-            topics_filter: Optional[list] = None,
+            sentiment_filter: str = None,
+            category_filter: str = None,
+            topics_filter: list = None,
             topic_filter_mode: str = "any"
         ) -> str:
             """Search comment text to find relevant information.
@@ -123,13 +111,6 @@ class DiscussionAgent:
 
             Returns:
                 Formatted text with relevant comment snippets and their IDs
-
-            Examples:
-                - "What did physicians say about the new requirements?"
-                  search_comments(query="new requirements", category_filter="Physicians & Surgeons")
-
-                - "What concerns do people have about costs?"
-                  search_comments(query="concerns about costs")
             """
             filters = {}
             if sentiment_filter:
@@ -139,7 +120,6 @@ class DiscussionAgent:
             if topics_filter:
                 filters["topics"] = topics_filter
 
-            # Run the RAG search
             snippets = await run_rag_search(
                 document_id=self.document_id,
                 question=query,
@@ -148,7 +128,7 @@ class DiscussionAgent:
             )
 
             if not snippets:
-                return "No relevant comments found for this query."
+                raise RAGSearchError(f"No relevant comments found for query: {query}")
 
             # Format the results
             output = [f"Found {len(snippets)} relevant comments:\n"]
@@ -159,12 +139,7 @@ class DiscussionAgent:
 
             return "\n".join(output)
 
-        return [get_statistics, search_comments]
-
-    def _create_graph(self):
-        """Create the agent graph using LangGraph's prebuilt ReAct agent."""
-
-        tools = self._create_tools()
+        tools = [get_statistics, search_comments]
 
         # Define the system message
         system_message = f"""You are a helpful assistant helping users explore and analyze public comments on a regulation document.
@@ -197,6 +172,9 @@ Be helpful, concise, and base your answers on the data from the tools."""
 
         Returns:
             The agent's response
+
+        Raises:
+            AgentInvocationError: If the agent fails to generate a response
         """
         state = {
             "messages": [HumanMessage(content=message)],
@@ -207,10 +185,10 @@ Be helpful, concise, and base your answers on the data from the tools."""
 
         # Get the last AI message
         ai_messages = [m for m in result["messages"] if isinstance(m, AIMessage)]
-        if ai_messages:
-            return ai_messages[-1].content
+        if not ai_messages:
+            raise AgentInvocationError("Agent failed to generate a response")
 
-        return "I'm sorry, I couldn't generate a response."
+        return ai_messages[-1].content
 
     async def stream(self, message: str):
         """Stream the agent's response.
