@@ -88,6 +88,24 @@ class ProcessingConfig(BaseSettings):
         extra = "ignore"
 
 
+class AgentConfig(BaseSettings):
+    """Configuration for AI agents."""
+
+    discussion_model: str = "gpt-4o-mini"
+    rag_model: str = "gpt-4o-mini"
+    temperature: float = 0.7
+    max_tokens: int = 4000
+    embeddings_model: str = "text-embedding-3-small"
+    max_rag_iterations: int = 3
+
+    class Config:
+        """Pydantic settings configuration."""
+        env_file = ".env"
+        env_file_encoding = "utf-8"
+        case_sensitive = False
+        extra = "ignore"
+
+
 def setup_langsmith(
     api_key: Optional[str] = None,
     project: Optional[str] = None,

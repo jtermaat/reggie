@@ -58,6 +58,9 @@ topic_tags.json
 data/*.csv
 reggie/db/backups/*.sql
 
+# Agent checkpoints (conversation history)
+.checkpoints/
+
 #repomix
 repomix-output.xml
 repomix-output.txt

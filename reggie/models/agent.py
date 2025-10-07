@@ -1,6 +1,6 @@
 """Models for agent operations."""
 
-from typing import List, Annotated, Optional
+from typing import List, Annotated, Optional, TypedDict, Sequence
 from operator import add
 from pydantic import BaseModel, Field
 from langchain_core.messages import BaseMessage
@@ -79,16 +79,23 @@ class CommentSnippet(BaseModel):
     )
 
 
-class RAGState(BaseModel):
-    """State for the RAG graph."""
+class RAGState(TypedDict, total=False):
+    """State for the RAG graph.
 
+    Uses TypedDict for better LangGraph integration and state handling.
+    """
+
+    # Required fields
     document_id: str
-    messages: Annotated[List[BaseMessage], add]
-    filters: dict = Field(default_factory=dict)
-    topic_filter_mode: str = "any"
-    current_query: str = ""
-    search_results: List[dict] = Field(default_factory=list)
-    all_retrieved_chunks: dict = Field(default_factory=dict)  # comment_id -> chunks
-    final_snippets: List[dict] = Field(default_factory=list)  # List of {comment_id, snippet}
-    iteration_count: int = 0
-    max_iterations: int = 3
+    messages: Annotated[Sequence[BaseMessage], add]
+
+    # Optional fields (total=False allows these to be missing)
+    filters: dict
+    topic_filter_mode: str
+    current_query: str
+    search_results: List[dict]
+    all_retrieved_chunks: dict  # comment_id -> chunks
+    final_snippets: List[RAGSnippet]
+    relevant_comment_ids: List[str]
+    iteration_count: int
+    max_iterations: int

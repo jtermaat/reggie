@@ -2,6 +2,7 @@
 
 import logging
 from typing import List, Dict, Any, Literal
+from functools import lru_cache
 
 from langchain_openai import OpenAIEmbeddings, ChatOpenAI
 from langchain_core.messages import HumanMessage, SystemMessage, AIMessage
@@ -14,6 +15,7 @@ from ..models.agent import (
     RAGState,
     RAGSnippet
 )
+from ..config import AgentConfig
 from ..db.connection import get_connection
 from ..db.repository import CommentRepository, CommentChunkRepository
 from ..exceptions import RAGSearchError
@@ -22,38 +24,39 @@ from ..prompts import prompts
 logger = logging.getLogger(__name__)
 
 
-def create_rag_graph(embeddings_model: str = "text-embedding-3-small") -> StateGraph:
-    """Create the RAG sub-agent graph.
+@lru_cache(maxsize=1)
+def create_rag_graph() -> StateGraph:
+    """Create and compile the RAG sub-agent graph (cached).
 
     This graph iteratively searches for relevant comment chunks, assesses whether
     enough information has been found, and extracts relevant snippets.
 
-    Args:
-        embeddings_model: OpenAI embeddings model to use
-
     Returns:
         Compiled StateGraph
     """
-    embeddings = OpenAIEmbeddings(model=embeddings_model)
-    llm = ChatOpenAI(model="gpt-4o-mini", temperature=0)
+    config = AgentConfig()
+    embeddings = OpenAIEmbeddings(model=config.embeddings_model)
+    llm = ChatOpenAI(model=config.rag_model, temperature=0)
 
     async def generate_query(state: RAGState) -> Dict[str, Any]:
         """Generate or refine the search query based on user's question."""
         logger.info("Generating search query")
 
         # Get the user's question from messages
-        user_messages = [m for m in state.messages if isinstance(m, HumanMessage)]
+        user_messages = [m for m in state["messages"] if isinstance(m, HumanMessage)]
         if not user_messages:
+            logger.error("No user question found in messages")
             raise ValueError("No user question found in messages")
 
         question = user_messages[-1].content
 
         # If this is first iteration, use the question directly as query
         # Otherwise, we should already have a suggested query from assessment
-        if state.iteration_count == 0:
+        iteration_count = state.get("iteration_count", 0)
+        if iteration_count == 0:
             query = question
         else:
-            query = state.current_query if state.current_query else question
+            query = state.get("current_query", question)
 
         logger.info(f"Using query: {query}")
 
@@ -64,39 +67,44 @@ def create_rag_graph(embeddings_model: str = "text-embedding-3-small") -> StateG
 
     async def search_vectors(state: RAGState) -> Dict[str, Any]:
         """Search for relevant comment chunks using vector similarity."""
-        logger.info(f"Searching vectors with query: {state.current_query}")
+        current_query = state.get("current_query", "")
+        logger.info(f"Searching vectors with query: {current_query}")
 
         # Generate embedding for query
-        query_embedding = await embeddings.aembed_query(state.current_query)
+        query_embedding = await embeddings.aembed_query(current_query)
 
         # Search chunks using repository
+        filters = state.get("filters", {})
         async with get_connection() as conn:
             results = await CommentChunkRepository.search_by_vector(
-                document_id=state.document_id,
+                document_id=state["document_id"],
                 query_embedding=query_embedding,
                 conn=conn,
                 limit=10,
-                sentiment_filter=state.filters.get("sentiment"),
-                category_filter=state.filters.get("category"),
-                topics_filter=state.filters.get("topics"),
-                topic_filter_mode=state.topic_filter_mode
+                sentiment_filter=filters.get("sentiment"),
+                category_filter=filters.get("category"),
+                topics_filter=filters.get("topics"),
+                topic_filter_mode=state.get("topic_filter_mode", "any")
             )
 
         logger.info(f"Found {len(results)} chunks")
 
-        if not results and state.iteration_count == 0:
-            raise RAGSearchError(f"No comment chunks found for query: {state.current_query}")
+        iteration_count = state.get("iteration_count", 0)
+        if not results and iteration_count == 0:
+            logger.error(f"No comment chunks found for query: {current_query}")
+            raise RAGSearchError(f"No comment chunks found for query: {current_query}")
 
         # Organize by comment_id
+        all_retrieved = state.get("all_retrieved_chunks", {})
         for result in results:
             comment_id = result.comment_id
-            if comment_id not in state.all_retrieved_chunks:
-                state.all_retrieved_chunks[comment_id] = []
-            state.all_retrieved_chunks[comment_id].append(result)
+            if comment_id not in all_retrieved:
+                all_retrieved[comment_id] = []
+            all_retrieved[comment_id].append(result)
 
         return {
             "search_results": results,
-            "all_retrieved_chunks": state.all_retrieved_chunks,
+            "all_retrieved_chunks": all_retrieved,
             "messages": [AIMessage(content=f"Retrieved {len(results)} relevant chunks")]
         }
 
@@ -105,12 +113,13 @@ def create_rag_graph(embeddings_model: str = "text-embedding-3-small") -> StateG
         logger.info("Assessing relevance of retrieved information")
 
         # Get user's question
-        user_messages = [m for m in state.messages if isinstance(m, HumanMessage)]
+        user_messages = [m for m in state["messages"] if isinstance(m, HumanMessage)]
         question = user_messages[-1].content
 
         # Format the chunks we've seen so far
+        all_retrieved = state.get("all_retrieved_chunks", {})
         chunks_summary = []
-        for comment_id, chunks in state.all_retrieved_chunks.items():
+        for comment_id, chunks in all_retrieved.items():
             for chunk in chunks:
                 chunks_summary.append(
                     f"Comment {comment_id} (chunk {chunk.chunk_index}): {chunk.chunk_text[:200]}..."
@@ -120,7 +129,7 @@ def create_rag_graph(embeddings_model: str = "text-embedding-3-small") -> StateG
         prompt_messages = prompts.RAG_RELEVANCE_ASSESSMENT.invoke({
             "question": question,
             "chunk_count": len(chunks_summary),
-            "comment_count": len(state.all_retrieved_chunks),
+            "comment_count": len(all_retrieved),
             "chunks_summary": chr(10).join(chunks_summary[:20])
         })
 
@@ -129,11 +138,12 @@ def create_rag_graph(embeddings_model: str = "text-embedding-3-small") -> StateG
 
         logger.info(f"Assessment: {assessment.has_enough_information}, reasoning: {assessment.reasoning}")
 
-        new_query = assessment.suggested_query if assessment.needs_different_query else state.current_query
+        current_query = state.get("current_query", "")
+        new_query = assessment.suggested_query if assessment.needs_different_query else current_query
 
         return {
             "current_query": new_query,
-            "iteration_count": state.iteration_count + 1,
+            "iteration_count": state.get("iteration_count", 0) + 1,
             "messages": [AIMessage(content=f"Assessment: {assessment.reasoning}")]
         }
 
@@ -141,12 +151,13 @@ def create_rag_graph(embeddings_model: str = "text-embedding-3-small") -> StateG
         """Select which comments contain relevant information."""
         logger.info("Selecting relevant comments")
 
-        user_messages = [m for m in state.messages if isinstance(m, HumanMessage)]
+        user_messages = [m for m in state["messages"] if isinstance(m, HumanMessage)]
         question = user_messages[-1].content
 
         # Format all unique comments we've retrieved
+        all_retrieved = state.get("all_retrieved_chunks", {})
         comment_summaries = []
-        for comment_id, chunks in state.all_retrieved_chunks.items():
+        for comment_id, chunks in all_retrieved.items():
             # Combine chunks for this comment
             chunk_texts = [c.chunk_text for c in chunks]
             combined = " ... ".join(chunk_texts)
@@ -165,19 +176,20 @@ def create_rag_graph(embeddings_model: str = "text-embedding-3-small") -> StateG
 
         return {
             "messages": [AIMessage(content=f"Selected {len(selection.relevant_comment_ids)} relevant comments")],
-            "_relevant_comment_ids": selection.relevant_comment_ids
+            "relevant_comment_ids": selection.relevant_comment_ids
         }
 
     async def extract_snippets(state: RAGState) -> Dict[str, Any]:
         """Extract relevant snippets from each selected comment."""
         logger.info("Extracting snippets from relevant comments")
 
-        # Get relevant comment IDs from the previous step
-        # We'll need to access them from state or pass them differently
-        # For now, let's use all retrieved comments
-        relevant_ids = list(state.all_retrieved_chunks.keys())
+        # Get relevant comment IDs from the selection step
+        relevant_ids = state.get("relevant_comment_ids", [])
+        if not relevant_ids:
+            # Fallback to all retrieved chunks if no selection was made
+            relevant_ids = list(state.get("all_retrieved_chunks", {}).keys())
 
-        user_messages = [m for m in state.messages if isinstance(m, HumanMessage)]
+        user_messages = [m for m in state["messages"] if isinstance(m, HumanMessage)]
         question = user_messages[-1].content
 
         snippets = []
@@ -218,6 +230,7 @@ def create_rag_graph(embeddings_model: str = "text-embedding-3-small") -> StateG
         logger.info(f"Extracted {len(snippets)} snippets")
 
         if not snippets:
+            logger.error("Failed to extract any valid snippets from comments")
             raise RAGSearchError("Failed to extract any valid snippets from comments")
 
         return {
@@ -228,19 +241,22 @@ def create_rag_graph(embeddings_model: str = "text-embedding-3-small") -> StateG
     def should_continue_searching(state: RAGState) -> Literal["search", "select"]:
         """Determine if we should continue searching or move to selection."""
         # Check if we've reached max iterations
-        if state.iteration_count >= state.max_iterations:
+        iteration_count = state.get("iteration_count", 0)
+        max_iterations = state.get("max_iterations", 3)
+        if iteration_count >= max_iterations:
             logger.info("Reached max iterations, moving to selection")
             return "select"
 
         # Check if we have any results
-        if not state.all_retrieved_chunks:
+        all_retrieved = state.get("all_retrieved_chunks", {})
+        if not all_retrieved:
             logger.info("No results yet, continuing search")
             return "search"
 
         # Parse the last assessment message to determine if we need more info
         # In a real implementation, we'd store the assessment in state
         # For now, if we have results and aren't at max iterations, move to select
-        if len(state.all_retrieved_chunks) >= 3:  # Have at least 3 comments
+        if len(all_retrieved) >= 3:  # Have at least 3 comments
             logger.info("Have enough comments, moving to selection")
             return "select"
 
@@ -296,13 +312,21 @@ async def run_rag_search(
         List of RAGSnippet objects
     """
     graph = create_rag_graph()
+    config = AgentConfig()
 
-    initial_state = RAGState(
-        document_id=document_id,
-        messages=[HumanMessage(content=question)],
-        filters=filters or {},
-        topic_filter_mode=topic_filter_mode
-    )
+    initial_state: RAGState = {
+        "document_id": document_id,
+        "messages": [HumanMessage(content=question)],
+        "filters": filters or {},
+        "topic_filter_mode": topic_filter_mode,
+        "current_query": "",
+        "search_results": [],
+        "all_retrieved_chunks": {},
+        "final_snippets": [],
+        "relevant_comment_ids": [],
+        "iteration_count": 0,
+        "max_iterations": config.max_rag_iterations
+    }
 
     # Run the graph
     final_state = await graph.ainvoke(initial_state)
