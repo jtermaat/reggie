@@ -361,15 +361,31 @@ def discuss(document_id: str, trace: bool, verbose: bool):
                     console.print("\n[dim]Goodbye![/dim]\n")
                     break
 
-                # Show thinking indicator
+                # Stream the response
                 console.print()
-                with console.status("[bold cyan]Thinking...", spinner="dots"):
-                    response = await agent.invoke(user_input)
 
-                # Display response
-                console.print("[bold blue]Assistant:[/bold blue]")
-                console.print(Markdown(response))
-                console.print()
+                response_started = False
+                async for token, metadata in agent.stream(user_input):
+                    # Skip non-agent messages
+                    langgraph_node = metadata.get('langgraph_node', '')
+
+                    # Check if this is a tool call from the agent
+                    if hasattr(token, 'tool_calls') and token.tool_calls:
+                        for tool_call in token.tool_calls:
+                            tool_name = tool_call.get('name', 'unknown')
+                            console.print(f"[dim]Using tool: {tool_name}...[/dim]")
+
+                    # Display content tokens from AI messages
+                    if hasattr(token, 'content') and isinstance(token.content, str) and token.content:
+                        if not response_started:
+                            console.print("[bold blue]Assistant:[/bold blue] ", end="")
+                            response_started = True
+                        console.print(token.content, end="")
+
+                if response_started:
+                    console.print("\n")
+                else:
+                    console.print()
 
             except KeyboardInterrupt:
                 console.print("\n\n[dim]Goodbye![/dim]\n")

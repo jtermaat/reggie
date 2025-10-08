@@ -139,14 +139,14 @@ class DiscussionAgent:
         return ai_messages[-1].content
 
     async def stream(self, message: str, session_id: str = "default"):
-        """Stream the agent's response.
+        """Stream the agent's response token-by-token.
 
         Args:
             message: The user's message
             session_id: Session identifier for conversation persistence
 
         Yields:
-            Chunks of the response
+            Tuples of (token, metadata) where token is a chunk of the AI response
         """
         state = {
             "messages": [HumanMessage(content=message)],
@@ -156,6 +156,6 @@ class DiscussionAgent:
         # Configure checkpointing with session/thread ID
         config = {"configurable": {"thread_id": session_id}}
 
-        async for event in self.graph.astream(state, config=config):
-            # Yield updates as they come
-            yield event
+        async for token, metadata in self.graph.astream(state, config=config, stream_mode="messages"):
+            # Yield tokens as they come from the LLM
+            yield token, metadata
