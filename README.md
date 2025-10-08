@@ -6,16 +6,6 @@ Data is loaded from the public API and processed by tagging with a lightweight L
 
 This data is saved in postgresql and exposed through query tools an agent can use to make statistical queries or text-based RAG searches (with optional filtering on the tagged metadata).  
 
-## Benefits of Tagging
-
-The tagging allows the agent to accurately answer questions like:
-
->"How many people support and oppose this regulation who are also doctors?"
-
->"What have doctors said about the rising cost of compliance?"
-
-The first question can be answered with a statistical query, and the second can be answered with a RAG search with additional filtering.  The agent might choose to limit results to commenters who are `PHYSICIANS_SURGEONS` and comments that touch on the topics of `COST_FINANCIAL` and/or `ADMINISTRATIVE_BURDEN`.
-
 ## RAG Graph
 
 ![Agent Graph](reggie-graph.png)
@@ -31,10 +21,78 @@ Reggie has three basic commands, corresponding to the three stages of analysis: 
 
 ### Processing
 
-`reggie process {document_id}`: Processes comment data for the given document, including chunking and embedding, and tagging the comments across three dimensions: 
-
--`commenter_category` *e.g. doctor, hospital, advocacy group*
+`reggie process {document_id}`: Processes comment data for the given document, including chunking and embedding, and tagging the comments by who is commenting, the topics they commented on, and their sentiment. The enums in [comment.py](https://github.com/jtermaat/reggie/blob/main/reggie/models/comment.py) show the kinds of tags that can be used.  
 
 ### Discussing
 
-`reggie discuss {document_id}`: Opens a dialogue with an agent.  The agent can query the comment data with vector search and filter by the tags we added during processing (e.g., ")
+`reggie discuss {document_id}`: Opens a dialogue with an agent.  The agent can query the comment data with vector search and filter by the tags we added during processing.  The agent can also make statistical queries to answer questions about the general support level of various types of commenters, or what sorts of topics were raised by whom.
+
+## Quick Start
+
+### Prerequisites
+
+- Python 3.9+
+- PostgreSQL with pgvector (or use Docker)
+- OpenAI API key
+
+### 1. Start PostgreSQL (Docker)
+
+```bash
+docker run --name reggie-postgres \
+  -e POSTGRES_PASSWORD=postgres \
+  -e POSTGRES_DB=reggie \
+  -p 5432:5432 \
+  -d pgvector/pgvector:pg16
+```
+
+### 2. Install Reggie
+
+```bash
+# Clone or navigate to the reggie directory
+cd /path/to/reggie
+
+# Create virtual environment
+python -m venv .venv
+source .venv/bin/activate  # On Windows: .venv\Scripts\activate
+
+# Install dependencies
+pip install -r requirements.txt
+pip install -e .
+```
+
+### 3. Configure Environment
+
+```bash
+# Copy example env file
+cp .env.example .env
+
+# Edit .env and add your OpenAI API key
+# Minimum required:
+# OPENAI_API_KEY=sk-...your-key-here...
+```
+
+### 4. Initialize Database
+
+```bash
+reggie init
+```
+
+You should see: "✓ Database initialized successfully!"
+
+### 5. Load a Document
+
+```bash
+reggie load CMS-2025-0304-0009
+```
+
+This will:
+- Fetch the document and all comments
+- Categorize each comment
+- Generate embeddings
+- Store everything in PostgreSQL
+
+**Note**: This may multiple hours depending on the number of comments, due to rate limiting. For a quick test, choose a document with a low number of comments.
+
+For example, CMS-2025-0304-0001 has only 10 comments.
+
+## Next Steps

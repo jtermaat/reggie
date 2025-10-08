@@ -45,7 +45,7 @@ class ReggieConfig(BaseSettings):
     categorization_rate_limit_sleep: float = Field(default=1.0)
 
     # Agent
-    discussion_model: str = Field(default="o4-mini")
+    discussion_model: str = Field(default="gpt-4o-mini")
     rag_model: str = Field(default="gpt-5-mini")
     embeddings_model: str = Field(default="text-embedding-3-small")
     max_rag_iterations: int = Field(default=3)
