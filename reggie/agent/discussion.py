@@ -1,8 +1,6 @@
 """Main discussion agent for interactive document exploration."""
 
 import logging
-import os
-from pathlib import Path
 
 from langchain_openai import ChatOpenAI
 from langchain_core.messages import HumanMessage, AIMessage
@@ -24,35 +22,29 @@ class DiscussionAgent:
     1. Statistical queries (get counts/breakdowns by category, sentiment, topic)
     2. Text-based queries (search comment content using RAG)
 
-    Supports persistent conversation history across sessions.
+    Supports conversation history within a session using in-memory checkpointing.
     """
 
     def __init__(
         self,
         document_id: str,
         llm: ChatOpenAI,
-        checkpoint_dir: str = ".checkpoints",
     ):
         """Initialize the discussion agent.
 
         Args:
             document_id: The document ID to discuss
             llm: ChatOpenAI instance for LLM operations
-            checkpoint_dir: Directory for storing conversation checkpoints
         """
         self.document_id = document_id
         self.llm = llm
-        self.checkpoint_dir = checkpoint_dir
-
-        # Setup checkpointing for persistent memory
-        self._setup_checkpointing()
+        self.checkpointer = MemorySaver()
         self.graph = self._create_graph()
 
     @classmethod
     def create(
         cls,
         document_id: str,
-        checkpoint_dir: str = ".checkpoints",
         model: str = None,
         temperature: float = None
     ) -> "DiscussionAgent":
@@ -60,7 +52,6 @@ class DiscussionAgent:
 
         Args:
             document_id: The document ID to discuss
-            checkpoint_dir: Directory for storing conversation checkpoints
             model: OpenAI model to use (overrides config)
             temperature: Temperature for the model (overrides config)
 
@@ -76,18 +67,8 @@ class DiscussionAgent:
 
         return cls(
             document_id=document_id,
-            llm=llm,
-            checkpoint_dir=checkpoint_dir
+            llm=llm
         )
-
-    def _setup_checkpointing(self):
-        """Setup SQLite checkpointing for conversation persistence."""
-        checkpoint_path = Path(self.checkpoint_dir)
-        checkpoint_path.mkdir(parents=True, exist_ok=True)
-
-        db_path = checkpoint_path / f"discussion_{self.document_id}.db"
-        self.checkpointer = MemorySaver()
-        logger.info(f"Initialized checkpointing at {db_path}")
 
     def _create_graph(self):
         """Create the agent graph using LangGraph's prebuilt ReAct agent."""

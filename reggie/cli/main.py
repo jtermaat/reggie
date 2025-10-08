@@ -256,6 +256,7 @@ def discuss(document_id: str, trace: bool, verbose: bool):
     from ..agent.status import set_status_callback, clear_status_callback
     from rich.markdown import Markdown
     from rich.panel import Panel
+    from langchain_core.messages import AIMessage
 
     # Enable LangSmith tracing if requested
     if trace:
@@ -361,26 +362,29 @@ def discuss(document_id: str, trace: bool, verbose: bool):
                     console.print("\n[dim]Goodbye![/dim]\n")
                     break
 
-                # Stream the response
+                # Stream the response with thinking indicator
                 console.print()
 
                 response_started = False
-                async for token, metadata in agent.stream(user_input):
-                    # Skip non-agent messages
-                    langgraph_node = metadata.get('langgraph_node', '')
+                status = console.status("[bold cyan]Thinking...", spinner="dots")
+                status.start()
 
-                    # Check if this is a tool call from the agent
-                    if hasattr(token, 'tool_calls') and token.tool_calls:
-                        for tool_call in token.tool_calls:
-                            tool_name = tool_call.get('name', 'unknown')
-                            console.print(f"[dim]Using tool: {tool_name}...[/dim]")
-
-                    # Display content tokens from AI messages
-                    if hasattr(token, 'content') and isinstance(token.content, str) and token.content:
-                        if not response_started:
-                            console.print("[bold blue]Assistant:[/bold blue] ", end="")
-                            response_started = True
-                        console.print(token.content, end="")
+                try:
+                    async for token, metadata in agent.stream(user_input):
+                        # Only display content from AIMessage objects (not ToolMessage)
+                        if isinstance(token, AIMessage):
+                            # Display content tokens from AI messages only
+                            if hasattr(token, 'content') and isinstance(token.content, str) and token.content:
+                                if not response_started:
+                                    # Stop the thinking indicator and start showing the response
+                                    status.stop()
+                                    console.print("[bold blue]Assistant:[/bold blue] ", end="")
+                                    response_started = True
+                                console.print(token.content, end="")
+                finally:
+                    # Ensure status is stopped even if there's an error
+                    if status._live.is_started:
+                        status.stop()
 
                 if response_started:
                     console.print("\n")
