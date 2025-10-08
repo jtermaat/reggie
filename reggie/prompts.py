@@ -30,7 +30,7 @@ Be helpful, concise, and base your answers on the data from the tools."""
 
 Review the chunks retrieved so far and determine if they contain enough information to answer the question.
 
-If not enough information has been found, suggest a different search query that might find more relevant information."""),
+If insufficient information, suggest a verbose, detailed search query (complete phrases, not keywords) to find more relevant content."""),
         ("user", """Question: {question}
 
 Retrieved chunks so far ({chunk_count} chunks from {comment_count} comments):
@@ -54,17 +54,17 @@ Retrieved comments:
 Which comment IDs contain relevant information?""")
     ])
 
-    # RAG graph prompts - Extract snippets
+    # RAG graph prompts - Extract passages
     RAG_EXTRACT_SNIPPET = ChatPromptTemplate.from_messages([
-        ("system", """You are extracting the relevant portion of a comment that helps answer the user's question.
+        ("system", """Extract the relevant portion of a comment that helps answer the user's question.
 
-Extract the exact text from the comment that is relevant. The snippet should be a direct quote from the comment text."""),
+Provide complete passages with full context - include surrounding sentences to preserve meaning. Prefer longer, contextual passages over brief excerpts."""),
         ("user", """Question: {question}
 
 Comment text:
 {full_text}
 
-Extract the portion of this comment that is relevant to answering the question.""")
+Extract the passage from this comment that is relevant to answering the question.""")
     ])
 
     # Pipeline prompts - Categorization
@@ -128,18 +128,20 @@ Returns formatted text with total count and percentage breakdown."""
 
     TOOL_SEARCH_COMMENTS_DESC = """Search comment text to find what people actually said about specific topics.
 
-Use this tool when you need to find actual quotes or examples of what commenters said. Good for questions like:
+Use verbose, detailed queries (full phrases, not keywords) for better semantic matching.
+
+Good for questions like:
 - "What did people say about Medicare?"
 - "Give me examples of concerns about costs"
 - "What reasons did supporters give?"
 
-You can filter which comments to search:
+Filters:
 - sentiment_filter: only search comments with specific sentiment
 - category_filter: only search comments from specific category
 - topics_filter: only search comments discussing certain topics
 - topic_filter_mode: 'any' or 'all' when using topics_filter
 
-Returns relevant snippets from matching comments with their IDs."""
+Returns relevant passages from matching comments with their IDs."""
 
 
 # Create singleton instance for easy import
