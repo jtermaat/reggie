@@ -11,17 +11,13 @@ This data is saved in postgresql and exposed through query tools an agent can us
 ![Agent Graph](reggie-graph.png)
 
 
-## Commands
-
-Reggie has three basic commands, corresponding to the three stages of analysis: **loading**, **processing**, and **discussion**.
-
 ### Loading
 
 `reggie load {document_id}`: Loads data from the regulations.gov API (this process is slow due to severe rate-limiting on the API)
 
 ### Processing
 
-`reggie process {document_id}`: Processes comment data for the given document, including chunking and embedding, and tagging the comments by who is commenting, the topics they commented on, and their sentiment. The enums in [comment.py](https://github.com/jtermaat/reggie/blob/main/reggie/models/comment.py) show the kinds of tags that can be used.  
+`reggie process {document_id}`: 
 
 ### Discussing
 
@@ -82,17 +78,32 @@ You should see: "✓ Database initialized successfully!"
 ### 5. Load a Document
 
 ```bash
-reggie load CMS-2025-0304-0009
+reggie load CMS-2025-0304-0001
 ```
 
-This will:
-- Fetch the document and all comments
-- Categorize each comment
-- Generate embeddings
-- Store everything in PostgreSQL
+This will fetch all the comments for that document.
 
-**Note**: This may multiple hours depending on the number of comments, due to rate limiting. For a quick test, choose a document with a low number of comments.
+**Note**: This may multiple hours depending on the number of comments, due to rate limiting. For a quick test, choose a document with a low number of comments. For example, [CMS-2025-0304-0001](https://www.regulations.gov/document/CMS-2025-0304-0001) has only 10 comments.
 
-For example, CMS-2025-0304-0001 has only 10 comments.
+### 6. Process the Comments
+
+  ```bash
+  reggie process CCMS-2025-0304-0001
+  ```
+
+  Processes comment data for the given document, including chunking and embedding, and tagging the comments by who is commenting, the topics they commented on, and their sentiment. The enums in [comment.py](https://github.com/jtermaat/reggie/blob/main/reggie/models/comment.py) show the kinds of tags that can be used.  
+  Note: Processing uses OpenAI API calls and may take time depending on the number of comments.
+
+### 7. Start a Discussion
+  
+  ```bash
+  reggie discuss CMS-2025-0304-0001
+  ```
+
+  Opens a dialogue with an agent.  The agent can query the comment data with vector search and filter by the tags we added during processing.  The agent can also make statistical queries to answer questions about the general support level of various types of commenters, or what sorts of topics were raised by whom.
+
+  - "What do physicians think about this rule?"
+  - "What concerns were raised about reimbursement?"
+
 
 ## Next Steps
