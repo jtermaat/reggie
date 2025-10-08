@@ -11,13 +11,13 @@ custom dataset and evaluators. It:
 
 Usage:
     # Run evaluation (will use LangSmith if configured in .env)
-    python -m reggie.agent.run_evaluation
+    python -m evals.run_evaluation
 
     # Run with custom settings
-    python -m reggie.agent.run_evaluation --model gpt-5-mini --limit 5
+    python -m evals.run_evaluation --model gpt-5-mini --limit 5
 
     # Generate report only (skip re-running evaluation)
-    python -m reggie.agent.run_evaluation --report-only
+    python -m evals.run_evaluation --report-only
 """
 
 import asyncio
@@ -27,17 +27,21 @@ from typing import Dict, Any, List, Optional
 import json
 
 import click
+from dotenv import load_dotenv
 from rich.console import Console
 from rich.table import Table
 from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn
 from langsmith import Client
-from langsmith.evaluation import evaluate
+from langsmith.evaluation import evaluate, aevaluate
 
-from ..config import get_config
-from ..logging_config import setup_logging, get_logger
+# Load environment variables first (before any OpenAI imports)
+load_dotenv()
+
+from reggie.config import get_config
+from reggie.logging_config import setup_logging, get_logger
+from reggie.agent.discussion import DiscussionAgent
 from .evaluation_dataset import get_evaluation_dataset, get_dataset_summary, DOCUMENT_ID
 from .evaluators import get_all_evaluators, get_evaluator_summary
-from .discussion import DiscussionAgent
 
 # Setup
 console = Console()
@@ -205,7 +209,7 @@ async def run_evaluation(
         # Run evaluation through LangSmith
         console.print("[cyan]Running evaluation through LangSmith...[/cyan]\n")
 
-        results = await evaluate(
+        results = await aevaluate(
             target,
             data=dataset_name,
             evaluators=evaluators,
