@@ -345,8 +345,17 @@ async def run_rag_search(
         "max_iterations": config.max_rag_iterations
     }
 
-    # Run the graph
-    final_state = await graph.ainvoke(initial_state)
+    # Run the graph with proper configuration for tracing
+    graph_config = {
+        "run_name": "rag_graph_execution",
+        "tags": ["rag", "retrieval", f"doc-{document_id}"],
+        "metadata": {
+            "max_iterations": config.max_rag_iterations,
+            "filters": filters or {}
+        }
+    }
+
+    final_state = await graph.ainvoke(initial_state, config=graph_config)
 
     # Add result metadata
     if run_tree:

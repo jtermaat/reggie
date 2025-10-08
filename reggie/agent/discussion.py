@@ -6,8 +6,6 @@ from langchain_openai import ChatOpenAI
 from langchain_core.messages import HumanMessage, AIMessage
 from langgraph.prebuilt import create_react_agent
 from langgraph.checkpoint.memory import MemorySaver
-from langsmith import traceable
-from langsmith.run_helpers import get_current_run_tree
 
 from ..config import get_config
 from ..exceptions import AgentInvocationError
@@ -87,11 +85,6 @@ class DiscussionAgent:
             checkpointer=self.checkpointer
         )
 
-    @traceable(
-        name="discuss_document",
-        run_type="chain",
-        tags=["production", "discussion"]
-    )
     async def invoke(self, message: str, session_id: str = "default") -> str:
         """Send a message to the agent and get a response.
 
@@ -105,23 +98,22 @@ class DiscussionAgent:
         Raises:
             AgentInvocationError: If the agent fails to generate a response
         """
-        # Add tags and metadata to current run
-        run_tree = get_current_run_tree()
-        if run_tree:
-            run_tree.add_tags([f"doc-{self.document_id}", f"session-{session_id}"])
-            run_tree.add_metadata({
-                "document_id": self.document_id,
-                "session_id": session_id,
-                "message_length": len(message)
-            })
-
         state = {
             "messages": [HumanMessage(content=message)],
             "document_id": self.document_id
         }
 
-        # Configure checkpointing with session/thread ID
-        config = {"configurable": {"thread_id": session_id}}
+        # Configure checkpointing with session/thread ID, metadata, and tags
+        config = {
+            "configurable": {"thread_id": session_id},
+            "run_name": "agent_discussion",
+            "metadata": {
+                "document_id": self.document_id,
+                "session_id": session_id,
+                "message_length": len(message)
+            },
+            "tags": ["production", "discussion", f"doc-{self.document_id}", f"session-{session_id}"]
+        }
 
         result = await self.graph.ainvoke(state, config=config)
 
@@ -133,11 +125,6 @@ class DiscussionAgent:
 
         return ai_messages[-1].content
 
-    @traceable(
-        name="discuss_document_stream",
-        run_type="chain",
-        tags=["production", "discussion", "streaming"]
-    )
     async def stream(self, message: str, session_id: str = "default"):
         """Stream the agent's response token-by-token.
 
@@ -148,24 +135,24 @@ class DiscussionAgent:
         Yields:
             Tuples of (token, metadata) where token is a chunk of the AI response
         """
-        # Add tags and metadata to current run
-        run_tree = get_current_run_tree()
-        if run_tree:
-            run_tree.add_tags([f"doc-{self.document_id}", f"session-{session_id}"])
-            run_tree.add_metadata({
-                "document_id": self.document_id,
-                "session_id": session_id,
-                "message_length": len(message),
-                "streaming": True
-            })
-
         state = {
             "messages": [HumanMessage(content=message)],
             "document_id": self.document_id
         }
 
         # Configure checkpointing with session/thread ID
-        config = {"configurable": {"thread_id": session_id}}
+        # Add metadata for LangSmith tracing (automatically captured by LangGraph)
+        config = {
+            "configurable": {"thread_id": session_id},
+            "run_name": "agent_discussion",
+            "metadata": {
+                "document_id": self.document_id,
+                "session_id": session_id,
+                "message_length": len(message),
+                "streaming": True
+            },
+            "tags": ["production", "discussion", "streaming", f"doc-{self.document_id}", f"session-{session_id}"]
+        }
 
         async for token, metadata in self.graph.astream(state, config=config, stream_mode="messages"):
             # Yield tokens as they come from the LLM

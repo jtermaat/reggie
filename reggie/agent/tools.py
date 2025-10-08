@@ -4,7 +4,6 @@ import logging
 from typing import Optional
 
 from langchain_core.tools import StructuredTool
-from langsmith import traceable
 from langsmith.run_helpers import get_current_run_tree
 
 from ..db.connection import get_connection
@@ -18,10 +17,6 @@ from .status import emit_status
 logger = logging.getLogger(__name__)
 
 
-@traceable(
-    name="get_statistics_tool",
-    run_type="tool"
-)
 async def get_statistics(
     document_id: str,
     group_by: str,
@@ -97,10 +92,6 @@ async def get_statistics(
     return "\n".join(output)
 
 
-@traceable(
-    name="search_comments_tool",
-    run_type="tool"
-)
 async def search_comments(
     document_id: str,
     query: str,
