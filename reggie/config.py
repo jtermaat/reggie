@@ -31,13 +31,13 @@ class ReggieConfig(BaseSettings):
     chunk_overlap: int = Field(default=200)
 
     # Processing
-    categorization_model: str = Field(default="gpt-4o-mini")
+    categorization_model: str = Field(default="gpt-5-nano")
     default_batch_size: int = Field(default=10)
     commit_every: int = Field(default=10)
 
     # Agent
-    discussion_model: str = Field(default="gpt-4o-mini")
-    rag_model: str = Field(default="gpt-4o-mini")
+    discussion_model: str = Field(default="gpt-5-mini")
+    rag_model: str = Field(default="gpt-5-mini")
     temperature: float = Field(default=0.7)
     max_tokens: int = Field(default=4000)
     embeddings_model: str = Field(default="text-embedding-3-small")
