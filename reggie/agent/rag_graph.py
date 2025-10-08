@@ -103,7 +103,7 @@ def create_rag_graph() -> StateGraph:
 
         iteration_count = state.get("iteration_count", 0)
         if not results and iteration_count == 0:
-            logger.error(f"No comment chunks found for query: {current_query}")
+            logger.warning(f"No comment chunks found for query: {current_query}")
             raise RAGSearchError(f"No comment chunks found for query: {current_query}")
 
         # Organize by comment_id

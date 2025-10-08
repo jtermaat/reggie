@@ -4,7 +4,7 @@ from typing import List, Annotated, Optional, TypedDict, Sequence, Literal
 from operator import add
 from pydantic import BaseModel, Field
 from langchain_core.messages import BaseMessage
-from .comment import Category, Sentiment
+from .comment import Category, Sentiment, Topic
 
 
 # Repository result models
@@ -49,35 +49,17 @@ class GetStatisticsInput(BaseModel):
     group_by: Literal["sentiment", "category", "topic"] = Field(
         description="What to group results by: 'sentiment', 'category', or 'topic'"
     )
-    sentiment_filter: Optional[Literal[
-        "for", "against", "mixed", "unclear"
-    ]] = Field(
+    sentiment_filter: Optional[Sentiment] = Field(
         default=None,
         description="Optional filter for specific sentiment"
     )
-    category_filter: Optional[Literal[
-        "Physicians & Surgeons",
-        "Other Licensed Clinicians",
-        "Healthcare Practice Staff",
-        "Patients & Caregivers",
-        "Patient/Disability Advocates & Advocacy Organizations",
-        "Professional Associations",
-        "Hospitals Health Systems & Networks",
-        "Healthcare Companies & Corporations",
-        "Pharmaceutical & Biotech Companies",
-        "Medical Device & Digital Health Companies",
-        "Government & Public Programs",
-        "Academic & Research Institutions",
-        "Nonprofits & Foundations",
-        "Individuals / Private Citizens",
-        "Anonymous / Not Specified"
-    ]] = Field(
+    category_filter: Optional[Category] = Field(
         default=None,
         description="Optional filter for specific category"
     )
-    topics_filter: Optional[List[str]] = Field(
+    topics_filter: Optional[List[Topic]] = Field(
         default=None,
-        description="Optional list of topic strings to filter by"
+        description="Optional list of topics to filter by"
     )
     topic_filter_mode: Literal["any", "all"] = Field(
         default="any",
@@ -91,35 +73,17 @@ class SearchCommentsInput(BaseModel):
     query: str = Field(
         description="The question or topic to search for in comment text"
     )
-    sentiment_filter: Optional[Literal[
-        "for", "against", "mixed", "unclear"
-    ]] = Field(
+    sentiment_filter: Optional[Sentiment] = Field(
         default=None,
         description="Optional filter for specific sentiment"
     )
-    category_filter: Optional[Literal[
-        "Physicians & Surgeons",
-        "Other Licensed Clinicians",
-        "Healthcare Practice Staff",
-        "Patients & Caregivers",
-        "Patient/Disability Advocates & Advocacy Organizations",
-        "Professional Associations",
-        "Hospitals Health Systems & Networks",
-        "Healthcare Companies & Corporations",
-        "Pharmaceutical & Biotech Companies",
-        "Medical Device & Digital Health Companies",
-        "Government & Public Programs",
-        "Academic & Research Institutions",
-        "Nonprofits & Foundations",
-        "Individuals / Private Citizens",
-        "Anonymous / Not Specified"
-    ]] = Field(
+    category_filter: Optional[Category] = Field(
         default=None,
         description="Optional filter for specific category"
     )
-    topics_filter: Optional[List[str]] = Field(
+    topics_filter: Optional[List[Topic]] = Field(
         default=None,
-        description="Optional list of topic strings to filter by"
+        description="Optional list of topics to filter by"
     )
     topic_filter_mode: Literal["any", "all"] = Field(
         default="any",

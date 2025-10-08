@@ -256,6 +256,7 @@ def discuss(document_id: str, trace: bool, verbose: bool):
     from ..agent.status import set_status_callback, clear_status_callback
     from rich.markdown import Markdown
     from rich.panel import Panel
+    from rich.live import Live
     from langchain_core.messages import AIMessage
 
     # Enable LangSmith tracing if requested
@@ -365,7 +366,9 @@ def discuss(document_id: str, trace: bool, verbose: bool):
                 # Stream the response with thinking indicator
                 console.print()
 
+                response_buffer = ""
                 response_started = False
+                live_display = None
                 status = console.status("[bold cyan]Thinking...", spinner="dots")
                 status.start()
 
@@ -378,17 +381,32 @@ def discuss(document_id: str, trace: bool, verbose: bool):
                                 if not response_started:
                                     # Stop the thinking indicator and start showing the response
                                     status.stop()
-                                    console.print("[bold blue]Assistant:[/bold blue] ", end="")
+                                    console.print("[bold blue]Assistant:[/bold blue]")
+                                    # Initialize Live display for streaming markdown
+                                    live_display = Live(Markdown(""), console=console, refresh_per_second=10)
+                                    live_display.start()
                                     response_started = True
-                                console.print(token.content, end="")
+
+                                # Accumulate tokens and update live display
+                                response_buffer += token.content
+                                if live_display:
+                                    live_display.update(Markdown(response_buffer))
+
+                    # Stop live display (leaves final content visible)
+                    if live_display:
+                        live_display.stop()
+
                 finally:
-                    # Ensure status is stopped even if there's an error
+                    # Ensure status and live display are stopped even if there's an error
                     if status._live.is_started:
                         status.stop()
+                    if live_display:
+                        try:
+                            live_display.stop()
+                        except:
+                            pass  # Already stopped
 
-                if response_started:
-                    console.print("\n")
-                else:
+                if not response_started:
                     console.print()
 
             except KeyboardInterrupt:
