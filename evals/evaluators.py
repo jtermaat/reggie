@@ -15,14 +15,63 @@ These evaluators are designed specifically for the two-tool RAG agent setup
 """
 
 import re
+import logging
 from typing import Dict, Any, List, Optional
 from langsmith.schemas import Run, Example
+from langsmith import Client
 from langchain_openai import ChatOpenAI
+
+from reggie.config import get_config
+
+logger = logging.getLogger(__name__)
+
+# Cache the LangSmith client
+_langsmith_client = None
+
+
+def _get_langsmith_client() -> Optional[Client]:
+    """Get or create a LangSmith client."""
+    global _langsmith_client
+    if _langsmith_client is None:
+        config = get_config()
+        if config.langsmith_api_key:
+            _langsmith_client = Client(api_key=config.langsmith_api_key)
+    return _langsmith_client
 
 
 # ============================================================================
 # TOOL SELECTION EVALUATOR
 # ============================================================================
+
+def _extract_tools_from_run(run: Run, depth: int = 0, max_depth: int = 10) -> set:
+    """Recursively extract tool names from a run and its children.
+
+    Args:
+        run: The run object to search
+        depth: Current recursion depth
+        max_depth: Maximum recursion depth to prevent infinite loops
+
+    Returns:
+        Set of tool names found
+    """
+    tools = set()
+
+    # Check if this run itself is a tool call
+    if hasattr(run, "name") and run.name in ["get_statistics", "search_comments"]:
+        tools.add(run.name)
+
+    # Also check run_type for tool identification
+    if hasattr(run, "run_type") and run.run_type == "tool":
+        if hasattr(run, "name") and run.name in ["get_statistics", "search_comments"]:
+            tools.add(run.name)
+
+    # Recursively search child runs if we haven't hit max depth
+    if depth < max_depth and hasattr(run, "child_runs") and run.child_runs:
+        for child_run in run.child_runs:
+            tools.update(_extract_tools_from_run(child_run, depth + 1, max_depth))
+
+    return tools
+
 
 def evaluate_tool_selection(run: Run, example: Example) -> Dict[str, Any]:
     """Evaluate whether the agent selected the appropriate tools.
@@ -36,14 +85,34 @@ def evaluate_tool_selection(run: Run, example: Example) -> Dict[str, Any]:
     """
     expected_tools = example.outputs.get("expected_output", {}).get("tools_used", [])
 
-    # Extract tools used from the run
-    used_tools = set()
-    if hasattr(run, "child_runs") and run.child_runs:
-        for child_run in run.child_runs:
-            if hasattr(child_run, "name"):
-                # LangChain tool calls will have tool names
-                if child_run.name in ["get_statistics", "search_comments"]:
-                    used_tools.add(child_run.name)
+    # Debug logging
+    logger.debug(f"Evaluating tool selection for run: {run.name} (id: {run.id})")
+    logger.debug(f"  Run type: {getattr(run, 'run_type', 'N/A')}")
+    logger.debug(f"  Has child_runs: {hasattr(run, 'child_runs')}")
+
+    # If child_runs is not populated, try to fetch them from the API
+    if not hasattr(run, 'child_runs') or not run.child_runs:
+        logger.debug("  Child runs not populated, fetching from API...")
+        client = _get_langsmith_client()
+        if client:
+            try:
+                # Fetch the run with child runs
+                full_run = client.read_run(run.id)
+                if hasattr(full_run, 'child_runs') and full_run.child_runs:
+                    run = full_run
+                    logger.debug(f"  Fetched {len(full_run.child_runs)} child runs")
+            except Exception as e:
+                logger.warning(f"  Failed to fetch child runs: {e}")
+
+    if hasattr(run, 'child_runs') and run.child_runs:
+        logger.debug(f"  Child run count: {len(run.child_runs)}")
+        logger.debug(f"  Child run names: {[cr.name for cr in run.child_runs[:5]]}")
+
+    # Extract tools used from the run (recursively search all child runs)
+    used_tools = _extract_tools_from_run(run)
+
+    logger.debug(f"  Expected tools: {expected_tools}")
+    logger.debug(f"  Used tools: {list(used_tools)}")
 
     # Check if expected tools were used
     expected_set = set(expected_tools)

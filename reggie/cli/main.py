@@ -363,51 +363,61 @@ def discuss(document_id: str, trace: bool, verbose: bool):
                     console.print("\n[dim]Goodbye![/dim]\n")
                     break
 
-                # Stream the response with thinking indicator
+                # TEMPORARY: Using non-streaming invoke for gpt-5-mini testing
                 console.print()
 
-                response_buffer = ""
-                response_started = False
-                live_display = None
-                status = console.status("[bold cyan]Thinking...", spinner="dots")
-                status.start()
+                with console.status("[bold cyan]Thinking...", spinner="dots"):
+                    response = await agent.invoke(user_input)
 
-                try:
-                    async for token, metadata in agent.stream(user_input):
-                        # Only display content from AIMessage objects (not ToolMessage)
-                        if isinstance(token, AIMessage):
-                            # Display content tokens from AI messages only
-                            if hasattr(token, 'content') and isinstance(token.content, str) and token.content:
-                                if not response_started:
-                                    # Stop the thinking indicator and start showing the response
-                                    status.stop()
-                                    console.print("[bold blue]Assistant:[/bold blue]")
-                                    # Initialize Live display for streaming markdown
-                                    live_display = Live(Markdown(""), console=console, refresh_per_second=10)
-                                    live_display.start()
-                                    response_started = True
+                console.print("[bold blue]Assistant:[/bold blue]")
+                console.print(Markdown(response))
+                console.print()
 
-                                # Accumulate tokens and update live display
-                                response_buffer += token.content
-                                if live_display:
-                                    live_display.update(Markdown(response_buffer))
+                # # Stream the response with thinking indicator
+                # console.print()
 
-                    # Stop live display (leaves final content visible)
-                    if live_display:
-                        live_display.stop()
+                # response_buffer = ""
+                # response_started = False
+                # live_display = None
+                # status = console.status("[bold cyan]Thinking...", spinner="dots")
+                # status.start()
 
-                finally:
-                    # Ensure status and live display are stopped even if there's an error
-                    if status._live.is_started:
-                        status.stop()
-                    if live_display:
-                        try:
-                            live_display.stop()
-                        except:
-                            pass  # Already stopped
+                # try:
+                #     async for token, metadata in agent.stream(user_input):
+                #         # Only display content from AIMessage objects (not ToolMessage)
+                #         if isinstance(token, AIMessage):
+                #             # Display content tokens from AI messages only
+                #             if hasattr(token, 'content') and isinstance(token.content, str) and token.content:
+                #                 if not response_started:
+                #                     # Stop the thinking indicator and start showing the response
+                #                     status.stop()
+                #                     console.print("[bold blue]Assistant:[/bold blue]")
+                #                     # Initialize Live display for streaming markdown
+                #                     live_display = Live(Markdown(""), console=console, refresh_per_second=10)
+                #                     live_display.start()
+                #                     response_started = True
 
-                if not response_started:
-                    console.print()
+                #                 # Accumulate tokens and update live display
+                #                 response_buffer += token.content
+                #                 if live_display:
+                #                     live_display.update(Markdown(response_buffer))
+
+                #     # Stop live display (leaves final content visible)
+                #     if live_display:
+                #         live_display.stop()
+
+                # finally:
+                #     # Ensure status and live display are stopped even if there's an error
+                #     if status._live.is_started:
+                #         status.stop()
+                #     if live_display:
+                #         try:
+                #             live_display.stop()
+                #         except:
+                #             pass  # Already stopped
+
+                # if not response_started:
+                #     console.print()
 
             except KeyboardInterrupt:
                 console.print("\n\n[dim]Goodbye![/dim]\n")

@@ -107,3 +107,13 @@ This will fetch all the comments for that document.
 
 
 ## Next Steps
+
+Time was the most challenging constraint in this project, and there are plenty of things left to do.  Here are some critical areas:
+
+- Right now, I'm using gpt-5-nano to tag the comments, but given this that this is a simple classification task, we could likely switch to a lightweight open source model.  One candidate to try is [Extract-0](https://github.com/herniqeu/extract0)
+
+- We should do more experiments to tune the parameters in config.py. Chunk_size and chunk_offset could likely benefit from smaller values, but there hasn't been time to effectively experiment with this.
+
+- Right now, we're stuck with a tradeoff where we can either use gpt-5-mini for the agent, or we can have streaming responses from OpenAI.  Experiments show that gpt-5-mini is superior.  We need to verify with OpenAI to enable streaming with gpt-5-mini.
+
+- Since this tool could benefit from both visualizations and links to comment pages on regulations.gov, it would be beneficial to build a web front-end rather than having it live on the command-line. 

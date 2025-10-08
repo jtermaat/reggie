@@ -345,6 +345,10 @@ def main(
     # Setup logging
     setup_logging(level="INFO")
 
+    # Enable DEBUG logging for evaluators
+    import logging
+    logging.getLogger("evals.evaluators").setLevel(logging.DEBUG)
+
     if report_only:
         # Just show the dataset summary
         summary = get_dataset_summary()
