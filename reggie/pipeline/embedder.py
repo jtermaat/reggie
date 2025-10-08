@@ -93,19 +93,22 @@ class CommentEmbedder:
     async def embed_chunks(
         self,
         chunks: List[str],
-        batch_size: int = 100,
+        batch_size: int = None,
     ) -> List[List[float]]:
         """Embed text chunks asynchronously.
 
         Args:
             chunks: List of text chunks to embed
-            batch_size: Number of chunks to embed in each batch
+            batch_size: Number of chunks to embed in each batch. If None, uses config default.
 
         Returns:
             List of embedding vectors
         """
         if not chunks:
             return []
+
+        config = get_config()
+        batch_size = batch_size or config.embedding_batch_size
 
         all_embeddings = []
 
@@ -120,7 +123,7 @@ class CommentEmbedder:
 
                 # Rate limiting between batches
                 if i + batch_size < len(chunks):
-                    await asyncio.sleep(1.0)
+                    await asyncio.sleep(config.embedding_rate_limit_sleep)
 
             except Exception as e:
                 logger.error(f"Error embedding batch {i//batch_size}: {e}")
@@ -156,17 +159,20 @@ class CommentEmbedder:
     async def process_comments_batch(
         self,
         comments: List[Dict],
-        batch_size: int = 10,
+        batch_size: int = None,
     ) -> List[List[Tuple[str, List[float]]]]:
         """Process multiple comments in parallel.
 
         Args:
             comments: List of comment dicts with 'comment_text' field
-            batch_size: Number of comments to process in parallel
+            batch_size: Number of comments to process in parallel. If None, uses config default.
 
         Returns:
             List of results, where each result is a list of (chunk, embedding) tuples
         """
+        config = get_config()
+        batch_size = batch_size or config.default_batch_size
+
         results = []
 
         for i in range(0, len(comments), batch_size):

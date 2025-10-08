@@ -61,7 +61,7 @@ def create_relevance_assessment_chain() -> Runnable:
         and returns RelevanceAssessment
     """
     config = get_config()
-    llm = ChatOpenAI(model=config.rag_model, temperature=0)
+    llm = ChatOpenAI(model=config.rag_model)
 
     # LCEL chain: prompt | llm with structured output
     return (
@@ -78,7 +78,7 @@ def create_comment_selection_chain() -> Runnable:
         and returns RelevantCommentSelection
     """
     config = get_config()
-    llm = ChatOpenAI(model=config.rag_model, temperature=0)
+    llm = ChatOpenAI(model=config.rag_model)
 
     # LCEL chain: prompt | llm with structured output
     return (
@@ -95,7 +95,7 @@ def create_snippet_extraction_chain() -> Runnable:
         and returns CommentSnippet
     """
     config = get_config()
-    llm = ChatOpenAI(model=config.rag_model, temperature=0)
+    llm = ChatOpenAI(model=config.rag_model)
 
     # LCEL chain: prompt | llm with structured output
     return (

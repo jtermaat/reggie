@@ -20,6 +20,12 @@ class ReggieConfig(BaseSettings):
     reg_api_key: str = Field(default="DEMO_KEY")
     reg_api_base_url: str = Field(default="https://api.regulations.gov/v4")
     reg_api_request_delay: float = Field(default=4.0)
+    reg_api_timeout: float = Field(default=30.0)
+    reg_api_page_size: int = Field(default=250)
+    reg_api_retry_attempts: int = Field(default=5)
+    reg_api_retry_wait_min: int = Field(default=2)
+    reg_api_retry_wait_max: int = Field(default=60)
+    reg_api_retry_wait_multiplier: int = Field(default=1)
 
     # API - OpenAI
     openai_api_key: str = Field()  # Required - no default
@@ -34,14 +40,20 @@ class ReggieConfig(BaseSettings):
     categorization_model: str = Field(default="gpt-5-nano")
     default_batch_size: int = Field(default=10)
     commit_every: int = Field(default=10)
+    embedding_batch_size: int = Field(default=100)
+    embedding_rate_limit_sleep: float = Field(default=1.0)
+    categorization_rate_limit_sleep: float = Field(default=1.0)
 
     # Agent
-    discussion_model: str = Field(default="gpt-5-mini")
+    discussion_model: str = Field(default="o4-mini")
     rag_model: str = Field(default="gpt-5-mini")
-    temperature: float = Field(default=0.7)
-    max_tokens: int = Field(default=4000)
     embeddings_model: str = Field(default="text-embedding-3-small")
     max_rag_iterations: int = Field(default=3)
+    vector_search_limit: int = Field(default=10)
+    min_comments_threshold: int = Field(default=3)
+    chunks_summary_display_limit: int = Field(default=20)
+    chunk_preview_chars: int = Field(default=200)
+    comment_preview_chars: int = Field(default=500)
 
     # LangSmith
     langsmith_enabled: bool = Field(default=False)

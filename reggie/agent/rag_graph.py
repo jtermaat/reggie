@@ -72,10 +72,11 @@ def create_rag_graph() -> StateGraph:
         logger.debug(f"Searching vectors with query: {current_query}")
 
         # Create search chain with current state parameters
+        config = get_config()
         filters = state.get("filters", {})
         search_chain = create_vector_search_chain(
             document_id=state["document_id"],
-            limit=10,
+            limit=config.vector_search_limit,
             sentiment_filter=filters.get("sentiment"),
             category_filter=filters.get("category"),
             topics_filter=filters.get("topics"),
@@ -126,6 +127,8 @@ def create_rag_graph() -> StateGraph:
 
         emit_status("evaluating result completeness")
 
+        config = get_config()
+
         # Get user's question
         user_messages = [m for m in state["messages"] if isinstance(m, HumanMessage)]
         question = user_messages[-1].content
@@ -136,7 +139,7 @@ def create_rag_graph() -> StateGraph:
         for comment_id, chunks in all_retrieved.items():
             for chunk in chunks:
                 chunks_summary.append(
-                    f"Comment {comment_id} (chunk {chunk.chunk_index}): {chunk.chunk_text[:200]}..."
+                    f"Comment {comment_id} (chunk {chunk.chunk_index}): {chunk.chunk_text[:config.chunk_preview_chars]}..."
                 )
 
         # Use LCEL chain for assessment
@@ -144,7 +147,7 @@ def create_rag_graph() -> StateGraph:
             "question": question,
             "chunk_count": len(chunks_summary),
             "comment_count": len(all_retrieved),
-            "chunks_summary": chr(10).join(chunks_summary[:20])
+            "chunks_summary": chr(10).join(chunks_summary[:config.chunks_summary_display_limit])
         })
 
         logger.debug(f"Assessment: {assessment.has_enough_information}, reasoning: {assessment.reasoning}")
@@ -164,6 +167,8 @@ def create_rag_graph() -> StateGraph:
 
         emit_status("selecting relevant comments")
 
+        config = get_config()
+
         user_messages = [m for m in state["messages"] if isinstance(m, HumanMessage)]
         question = user_messages[-1].content
 
@@ -174,7 +179,7 @@ def create_rag_graph() -> StateGraph:
             # Combine chunks for this comment
             chunk_texts = [c.chunk_text for c in chunks]
             combined = " ... ".join(chunk_texts)
-            comment_summaries.append(f"Comment ID: {comment_id}\n{combined[:500]}...")
+            comment_summaries.append(f"Comment ID: {comment_id}\n{combined[:config.comment_preview_chars]}...")
 
         # Use LCEL chain for selection
         selection = await selection_chain.ainvoke({
@@ -231,6 +236,8 @@ def create_rag_graph() -> StateGraph:
 
     def should_continue_searching(state: RAGState) -> Literal["search", "select"]:
         """Determine if we should continue searching or move to selection."""
+        config = get_config()
+
         # Check if we've reached max iterations
         iteration_count = state.get("iteration_count", 0)
         max_iterations = state.get("max_iterations", 3)
@@ -247,7 +254,7 @@ def create_rag_graph() -> StateGraph:
         # Parse the last assessment message to determine if we need more info
         # In a real implementation, we'd store the assessment in state
         # For now, if we have results and aren't at max iterations, move to select
-        if len(all_retrieved) >= 3:  # Have at least 3 comments
+        if len(all_retrieved) >= config.min_comments_threshold:
             logger.debug("Have enough comments, moving to selection")
             return "select"
 

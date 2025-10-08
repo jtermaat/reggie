@@ -107,17 +107,20 @@ class CommentCategorizer:
     async def categorize_batch(
         self,
         comments: list[Dict],
-        batch_size: int = 10,
+        batch_size: int = None,
     ) -> list[CommentClassification]:
         """Categorize multiple comments in batches.
 
         Args:
             comments: List of comment dicts with 'comment_text' and optional metadata
-            batch_size: Number of comments to process in parallel
+            batch_size: Number of comments to process in parallel. If None, uses config default.
 
         Returns:
             List of CommentClassification objects
         """
+        config = get_config()
+        batch_size = batch_size or config.default_batch_size
+
         results = []
 
         for i in range(0, len(comments), batch_size):
@@ -155,6 +158,6 @@ class CommentCategorizer:
 
             # Rate limiting between batches
             if i + batch_size < len(comments):
-                await asyncio.sleep(1.0)
+                await asyncio.sleep(config.categorization_rate_limit_sleep)
 
         return results

@@ -2,12 +2,6 @@
 
 from typing import Dict, List, Optional, AsyncIterator
 import asyncio
-from tenacity import (
-    retry,
-    stop_after_attempt,
-    wait_exponential,
-    retry_if_exception_type,
-)
 import httpx
 
 from ..config import get_config
@@ -26,9 +20,13 @@ class RegulationsAPIClient:
         self.api_key = api_key or config.reg_api_key
         self.base_url = config.reg_api_base_url
         self.request_delay = config.reg_api_request_delay
+        self.retry_attempts = config.reg_api_retry_attempts
+        self.retry_wait_min = config.reg_api_retry_wait_min
+        self.retry_wait_max = config.reg_api_retry_wait_max
+        self.retry_wait_multiplier = config.reg_api_retry_wait_multiplier
         self.client = httpx.AsyncClient(
             headers={"X-Api-Key": self.api_key},
-            timeout=30.0,
+            timeout=config.reg_api_timeout,
         )
 
     async def close(self):
@@ -41,12 +39,6 @@ class RegulationsAPIClient:
     async def __aexit__(self, exc_type, exc_val, exc_tb):
         await self.close()
 
-    @retry(
-        retry=retry_if_exception_type(httpx.HTTPStatusError),
-        wait=wait_exponential(multiplier=1, min=2, max=60),
-        stop=stop_after_attempt(5),
-        reraise=True,
-    )
     async def _get(self, endpoint: str, params: Optional[Dict] = None) -> Dict:
         """Make a GET request to the API with retry logic and rate limiting.
 
@@ -65,9 +57,28 @@ class RegulationsAPIClient:
         await asyncio.sleep(self.request_delay)
 
         url = f"{self.base_url}/{endpoint}"
-        response = await self.client.get(url, params=params)
-        response.raise_for_status()
-        return response.json()
+
+        # Implement retry logic manually using instance config
+        last_exception = None
+        for attempt in range(self.retry_attempts):
+            try:
+                response = await self.client.get(url, params=params)
+                response.raise_for_status()
+                return response.json()
+            except httpx.HTTPStatusError as e:
+                last_exception = e
+                if attempt < self.retry_attempts - 1:
+                    # Calculate exponential backoff wait time
+                    wait_time = min(
+                        self.retry_wait_multiplier * (2 ** attempt),
+                        self.retry_wait_max
+                    )
+                    wait_time = max(wait_time, self.retry_wait_min)
+                    await asyncio.sleep(wait_time)
+                # On last attempt, will raise below
+
+        # If we got here, all retries failed
+        raise last_exception
 
     async def get_document(self, document_id: str) -> Dict:
         """Get document metadata by document ID.
@@ -85,7 +96,7 @@ class RegulationsAPIClient:
         self,
         object_id: str,
         page_number: int = 1,
-        page_size: int = 250,
+        page_size: int = None,
         sort: str = None,
         last_modified_date_ge: str = None,
     ) -> Dict:
@@ -94,13 +105,16 @@ class RegulationsAPIClient:
         Args:
             object_id: Document object ID
             page_number: Page number (1-indexed)
-            page_size: Number of results per page (max 250)
+            page_size: Number of results per page (max 250). If None, uses config default.
             sort: Sort order (e.g., "lastModifiedDate,documentId")
             last_modified_date_ge: Filter for lastModifiedDate >= this value (format: "YYYY-MM-DD HH:mm:ss")
 
         Returns:
             Response with comments data and metadata
         """
+        config = get_config()
+        page_size = page_size or config.reg_api_page_size
+
         params = {
             "filter[commentOnId]": object_id,
             "page[size]": min(page_size, 250),
@@ -116,7 +130,7 @@ class RegulationsAPIClient:
         return await self._get("comments", params=params)
 
     async def get_all_comments(
-        self, object_id: str, page_size: int = 250
+        self, object_id: str, page_size: int = None
     ) -> AsyncIterator[Dict]:
         """Asynchronously iterate over all comments for a document.
 
@@ -129,13 +143,16 @@ class RegulationsAPIClient:
 
         Args:
             object_id: Document object ID
-            page_size: Number of results per page (max 250)
+            page_size: Number of results per page (max 250). If None, uses config default.
 
         Yields:
             Individual comment data dicts
         """
         import logging
         from datetime import datetime
+
+        config = get_config()
+        page_size = page_size or config.reg_api_page_size
 
         logger = logging.getLogger(__name__)
         MAX_PAGE_NUMBER = 20  # API limitation

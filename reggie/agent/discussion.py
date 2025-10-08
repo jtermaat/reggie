@@ -45,15 +45,13 @@ class DiscussionAgent:
     def create(
         cls,
         document_id: str,
-        model: str = None,
-        temperature: float = None
+        model: str = None
     ) -> "DiscussionAgent":
         """Factory method to create a DiscussionAgent with default configuration.
 
         Args:
             document_id: The document ID to discuss
             model: OpenAI model to use (overrides config)
-            temperature: Temperature for the model (overrides config)
 
         Returns:
             Configured DiscussionAgent instance
@@ -61,8 +59,7 @@ class DiscussionAgent:
         config = get_config()
 
         llm = ChatOpenAI(
-            model=model or config.discussion_model,
-            temperature=temperature if temperature is not None else config.temperature
+            model=model or config.discussion_model
         )
 
         return cls(
