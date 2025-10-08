@@ -6,6 +6,8 @@ from functools import lru_cache
 
 from langchain_core.messages import HumanMessage, SystemMessage, AIMessage
 from langgraph.graph import StateGraph, END
+from langsmith import traceable
+from langsmith.run_helpers import get_current_run_tree
 
 from ..models.agent import (
     RAGState,
@@ -292,6 +294,10 @@ def create_rag_graph() -> StateGraph:
     return workflow.compile()
 
 
+@traceable(
+    name="rag_search",
+    run_type="chain"
+)
 async def run_rag_search(
     document_id: str,
     question: str,
@@ -309,6 +315,19 @@ async def run_rag_search(
     Returns:
         List of RAGSnippet objects containing complete comment text
     """
+    # Add metadata to LangSmith trace
+    run_tree = get_current_run_tree()
+    if run_tree:
+        run_tree.add_tags(["rag_search", f"doc-{document_id}"])
+        run_tree.add_metadata({
+            "document_id": document_id,
+            "question": question,
+            "question_length": len(question),
+            "filters_applied": bool(filters),
+            "filters": filters or {},
+            "topic_filter_mode": topic_filter_mode
+        })
+
     graph = create_rag_graph()
     config = get_config()
 
@@ -328,5 +347,12 @@ async def run_rag_search(
 
     # Run the graph
     final_state = await graph.ainvoke(initial_state)
+
+    # Add result metadata
+    if run_tree:
+        run_tree.add_metadata({
+            "snippets_found": len(final_state["final_snippets"]),
+            "iterations_used": final_state.get("iteration_count", 0)
+        })
 
     return final_state["final_snippets"]

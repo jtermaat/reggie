@@ -4,6 +4,8 @@ import logging
 from typing import Optional
 
 from langchain_core.tools import StructuredTool
+from langsmith import traceable
+from langsmith.run_helpers import get_current_run_tree
 
 from ..db.connection import get_connection
 from ..db.repository import CommentRepository
@@ -16,6 +18,10 @@ from .status import emit_status
 logger = logging.getLogger(__name__)
 
 
+@traceable(
+    name="get_statistics_tool",
+    run_type="tool"
+)
 async def get_statistics(
     document_id: str,
     group_by: str,
@@ -37,19 +43,36 @@ async def get_statistics(
     Returns:
         Formatted string with statistical breakdown
     """
-    # Build filter info for status message
+    # Build filter info for status message and metadata
     filter_parts = []
+    filters_applied = {}
     if sentiment_filter:
         filter_parts.append(f"sentiment={sentiment_filter}")
+        filters_applied["sentiment"] = sentiment_filter
     if category_filter:
         filter_parts.append(f"category={category_filter}")
+        filters_applied["category"] = category_filter
     if topics_filter:
         filter_parts.append(f"topics={topics_filter}")
+        filters_applied["topics"] = topics_filter
 
     if filter_parts:
         emit_status(f"querying comment statistics (filtered on {', '.join(filter_parts)})")
     else:
         emit_status("querying comment statistics")
+
+    # Add metadata to LangSmith trace
+    run_tree = get_current_run_tree()
+    if run_tree:
+        run_tree.add_tags(["statistical_query", f"group_by_{group_by}"])
+        run_tree.add_metadata({
+            "document_id": document_id,
+            "query_type": "statistical",
+            "group_by": group_by,
+            "filters_applied": bool(filters_applied),
+            "filters": filters_applied,
+            "topic_filter_mode": topic_filter_mode
+        })
 
     async with get_connection() as conn:
         result = await CommentRepository.get_statistics(
@@ -74,6 +97,10 @@ async def get_statistics(
     return "\n".join(output)
 
 
+@traceable(
+    name="search_comments_tool",
+    run_type="tool"
+)
 async def search_comments(
     document_id: str,
     query: str,
@@ -102,6 +129,19 @@ async def search_comments(
         filters["category"] = category_filter
     if topics_filter:
         filters["topics"] = topics_filter
+
+    # Add metadata to LangSmith trace
+    run_tree = get_current_run_tree()
+    if run_tree:
+        run_tree.add_tags(["rag_query", "text_search"])
+        run_tree.add_metadata({
+            "document_id": document_id,
+            "query_type": "rag_search",
+            "query_length": len(query),
+            "filters_applied": bool(filters),
+            "filters": filters,
+            "topic_filter_mode": topic_filter_mode
+        })
 
     snippets = await run_rag_search(
         document_id=document_id,

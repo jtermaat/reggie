@@ -57,7 +57,7 @@ class ReggieConfig(BaseSettings):
 
     # LangSmith
     langsmith_enabled: bool = Field(default=False)
-    langsmith_project: str = Field(default="reggie")
+    langsmith_project: str = Field(default="reggie-agent-eval")
     langsmith_tracing: bool = Field(default=False)
     langsmith_api_key: Optional[str] = Field(default=None)
 
