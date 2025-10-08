@@ -2,9 +2,11 @@
 
 Reggie is an end-to-end tool for loading, processing, and analyzing comments on regulation documents on [Regulations.gov](https://www.regulations.gov/), with a particular focus on Healthcare regulations.
 
-Data is loaded from an API and processed by tagging with a lightweight LLM and chunking/embedding for vector search.
+Data is loaded from the public API and processed by tagging with a lightweight LLM and chunking/embedding for vector search.
 
-This data is saved in postgresql and exposed through query tools an agent can use to make statistical queries or text-based RAG searches.  
+This data is saved in postgresql and exposed through query tools an agent can use to make statistical queries or text-based RAG searches (with optional filtering on the tagged metadata).  
+
+## Benefits of Tagging
 
 The tagging allows the agent to accurately answer questions like:
 
@@ -12,7 +14,9 @@ The tagging allows the agent to accurately answer questions like:
 
 >"What have doctors said about the rising cost of compliance?"
 
+The first question can be answered with a statistical query, and the second can be answered with a RAG search with additional filtering.  The agent might choose to limit results to commenters who are `PHYSICIANS_SURGEONS` and comments that touch on the topics of `COST_FINANCIAL` and/or `ADMINISTRATIVE_BURDEN`.
 
+## RAG Graph
 
 ![Agent Graph](reggie-graph.png)
 
