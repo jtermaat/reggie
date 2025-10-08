@@ -1,4 +1,4 @@
-"""RAG sub-agent graph for retrieving relevant comment snippets."""
+"""RAG sub-agent graph for retrieving relevant comments."""
 
 import logging
 from typing import List, Dict, Any, Literal
@@ -18,8 +18,7 @@ from ..exceptions import RAGSearchError
 from .chains import (
     create_vector_search_chain,
     create_relevance_assessment_chain,
-    create_comment_selection_chain,
-    create_snippet_extraction_chain
+    create_comment_selection_chain
 )
 from .status import emit_status
 
@@ -31,7 +30,7 @@ def create_rag_graph() -> StateGraph:
     """Create and compile the RAG sub-agent graph (cached).
 
     This graph iteratively searches for relevant comment chunks, assesses whether
-    enough information has been found, and extracts relevant snippets.
+    enough information has been found, and retrieves complete comments.
 
     Returns:
         Compiled StateGraph
@@ -39,7 +38,6 @@ def create_rag_graph() -> StateGraph:
     # Create reusable LCEL chains
     relevance_chain = create_relevance_assessment_chain()
     selection_chain = create_comment_selection_chain()
-    snippet_chain = create_snippet_extraction_chain()
 
     async def generate_query(state: RAGState) -> Dict[str, Any]:
         """Generate or refine the search query based on user's question."""
@@ -192,19 +190,16 @@ def create_rag_graph() -> StateGraph:
         }
 
     async def extract_snippets(state: RAGState) -> Dict[str, Any]:
-        """Extract relevant snippets from each selected comment."""
-        logger.debug("Extracting snippets from relevant comments")
+        """Retrieve full text from each selected comment."""
+        logger.debug("Retrieving full text from relevant comments")
 
-        emit_status("selecting most relevant comment text")
+        emit_status("retrieving selected comments")
 
         # Get relevant comment IDs from the selection step
         relevant_ids = state.get("relevant_comment_ids", [])
         if not relevant_ids:
             # Fallback to all retrieved chunks if no selection was made
             relevant_ids = list(state.get("all_retrieved_chunks", {}).keys())
-
-        user_messages = [m for m in state["messages"] if isinstance(m, HumanMessage)]
-        question = user_messages[-1].content
 
         snippets = []
 
@@ -217,35 +212,21 @@ def create_rag_graph() -> StateGraph:
                     logger.warning(f"No text found for comment {comment_id}")
                     continue
 
-                # Use LCEL chain for snippet extraction
-                snippet_obj = await snippet_chain.ainvoke({
-                    "question": question,
-                    "full_text": full_text
-                })
-
-                # Validate that snippet is actually in the comment
-                if not snippet_obj.snippet.strip():
-                    logger.warning(f"Empty snippet returned for comment {comment_id}")
-                    continue
-
-                if snippet_obj.snippet not in full_text:
-                    logger.warning(f"Snippet not found in comment {comment_id}, skipping")
-                    continue
-
+                # Return full comment text instead of extracted snippet
                 snippets.append(RAGSnippet(
                     comment_id=comment_id,
-                    snippet=snippet_obj.snippet
+                    snippet=full_text
                 ))
 
-        logger.debug(f"Extracted {len(snippets)} snippets")
+        logger.debug(f"Retrieved {len(snippets)} complete comments")
 
         if not snippets:
-            logger.error("Failed to extract any valid snippets from comments")
-            raise RAGSearchError("Failed to extract any valid snippets from comments")
+            logger.error("Failed to retrieve any comments")
+            raise RAGSearchError("Failed to retrieve any comments")
 
         return {
             "final_snippets": snippets,
-            "messages": [AIMessage(content=f"Extracted {len(snippets)} relevant snippets")]
+            "messages": [AIMessage(content=f"Retrieved {len(snippets)} complete comments")]
         }
 
     def should_continue_searching(state: RAGState) -> Literal["search", "select"]:
@@ -310,7 +291,7 @@ async def run_rag_search(
     filters: Dict[str, Any] = None,
     topic_filter_mode: str = "any"
 ) -> List[RAGSnippet]:
-    """Run the RAG search graph to find relevant comment snippets.
+    """Run the RAG search graph to find relevant comments.
 
     Args:
         document_id: The document to search within
@@ -319,7 +300,7 @@ async def run_rag_search(
         topic_filter_mode: 'any' or 'all' for topic filtering
 
     Returns:
-        List of RAGSnippet objects
+        List of RAGSnippet objects containing complete comment text
     """
     graph = create_rag_graph()
     config = get_config()

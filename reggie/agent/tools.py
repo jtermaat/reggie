@@ -93,7 +93,7 @@ async def search_comments(
         topic_filter_mode: 'any' or 'all' for topic filtering
 
     Returns:
-        Formatted text with relevant comment snippets and IDs
+        Formatted text with complete relevant comments and IDs
     """
     filters = {}
     if sentiment_filter:
