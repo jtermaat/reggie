@@ -10,6 +10,53 @@ This data is saved in postgresql and exposed through query tools an agent can us
 
 ![Agent Graph](reggie-graph.png)
 
+## Design Notes
+
+### Tagging
+
+During processing, each comment is classified by a lightweight LLM (gpt-5-nano) along three dimensions:
+
+- **Category**: Who is commenting (e.g., "Physicians & Surgeons", "Patient Advocates", "Hospitals & Health Systems")
+- **Sentiment**: Position on the regulation ("for", "against", "mixed", "unclear")
+- **Topics**: What they discuss (e.g., "reimbursement_payment", "access_to_care", "administrative_burden")
+
+Detailed enums can be viewed in [comment.py](https://github.com/jtermaat/reggie/blob/main/reggie/models/comment.py).
+
+These tags are stored as structured metadata in PostgreSQL alongside the embeddings.
+
+### Tools: Statistical Queries and Filtered RAG
+
+This tagging enables the agent to use two tools: A statistical query tool, and a text-based RAG search with optional filtering on tagged metadata.
+
+The statistical queries allow it to answer questions like:
+
+> "What do doctors generally think about this rule?"
+
+Filtered RAG queries allow it to answer questions like:
+
+> "What do physicians think about reimbursement?"
+
+The agent can filter the vector search to only comments where:
+- `category = "Physicians & Surgeons"`
+- `topics = ["reimbursement_payment"]`
+
+### Separated RAG Sub-Agent
+
+Rather than having the discussion agent directly call vector search, we use a **separate LangGraph sub-agent** ([rag_graph.py](https://github.com/jtermaat/reggie/blob/main/reggie/agent/rag_graph.py)) for retrieval:
+
+
+**Context Savings for the main agent**
+
+The RAG sub-agent evaluates chunk snippets and decides which comments are relevant *before* returning results to the main agent. The discussion agent only sees the final, filtered set of complete comments—not all the intermediate search results and assessments, avoiding context pollution.
+
+
+### Evaluation Framework
+
+The evaluation dataset can be viewed [here along with evaluation runs](https://smith.langchain.com/public/97d8f43d-6ad7-4cc9-9b02-c9c37ef4768d/d).
+
+Queries are ranked Easy, Medium, and Hard, with evaluators for completeness, accuracy, relevance, filter application, and tool choice.
+
+
 
 ## Quick Start
 
@@ -93,7 +140,7 @@ This will fetch all the comments for that document.
   - "What concerns were raised about reimbursement?"
 
 
-## Next Steps
+## Tradeoffs and Next Steps
 
 Time was the most challenging constraint in this project, and there are plenty of things left to do.  Here are some critical areas:
 
