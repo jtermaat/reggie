@@ -144,6 +144,8 @@ This will fetch all the comments for that document.
 
 Time was the most challenging constraint in this project, and there are plenty of things left to do.  Here are some critical areas:
 
+- Right now, there is room for some enhancement to the integration between the ReAct agent and the rag graph.  This is a critical issue in the functionality of the tool that hasn't been fully resolved purely due to time constraints.  I'm happy to discuss this in more depth.
+
 - Right now, I'm using gpt-5-nano to tag the comments, but given this that this is a simple classification task, we could likely switch to a lightweight open source model.  One candidate to try is [Extract-0](https://github.com/herniqeu/extract0)
 
 - We should do more experiments to tune the parameters in config.py. Chunk_size and chunk_offset could likely benefit from smaller values, but there hasn't been time to effectively experiment with this.
