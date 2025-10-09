@@ -11,18 +11,6 @@ This data is saved in postgresql and exposed through query tools an agent can us
 ![Agent Graph](reggie-graph.png)
 
 
-### Loading
-
-`reggie load {document_id}`: Loads data from the regulations.gov API (this process is slow due to severe rate-limiting on the API)
-
-### Processing
-
-`reggie process {document_id}`: 
-
-### Discussing
-
-`reggie discuss {document_id}`: Opens a dialogue with an agent.  The agent can query the comment data with vector search and filter by the tags we added during processing.  The agent can also make statistical queries to answer questions about the general support level of various types of commenters, or what sorts of topics were raised by whom.
-
 ## Quick Start
 
 ### Prerequisites
