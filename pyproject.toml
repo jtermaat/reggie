@@ -1,0 +1,56 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "reggie"
+version = "0.1.0"
+description = "AI Agent for exploring Regulations.gov"
+requires-python = ">=3.9"
+dependencies = [
+    "langchain>=0.3.0",
+    "langchain-openai>=0.2.0",
+    "langchain-postgres>=0.0.15",
+    "langgraph>=0.2.0",
+    "langsmith>=0.2.0",
+    "openai>=1.0.0",
+    "psycopg[binary]>=3.2.0",
+    "pgvector>=0.3.0",
+    "python-dotenv>=1.0.0",
+    "requests>=2.32.0",
+    "urllib3<2.0.0",
+    "click>=8.1.0",
+    "rich>=13.0.0",
+    "httpx>=0.27.0",
+    "asyncio-throttle>=1.0.0",
+    "tenacity>=9.0.0",
+    "tiktoken>=0.8.0",
+    "pydantic>=2.0.0",
+    "pydantic-settings>=2.0.0",
+]
+
+[project.scripts]
+reggie = "reggie.cli.main:main"
+
+[tool.setuptools.packages.find]
+include = ["reggie*"]
+
+[tool.setuptools.package-data]
+reggie = ["db/*.sql"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+addopts = [
+    "-v",
+    "--tb=short",
+    "--strict-markers",
+]
+markers = [
+    "unit: Unit tests",
+    "integration: Integration tests",
+    "cli: CLI tests",
+]
