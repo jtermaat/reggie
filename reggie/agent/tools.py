@@ -13,6 +13,7 @@ from ..prompts import prompts
 from ..models.agent import GetStatisticsInput
 from .rag_graph import run_rag_search
 from .status import emit_status
+from .visualizations import emit_visualization
 
 logger = logging.getLogger(__name__)
 
@@ -79,6 +80,22 @@ async def get_statistics(
             topics_filter=topics_filter,
             topic_filter_mode=topic_filter_mode
         )
+
+    # Emit visualization data
+    emit_visualization({
+        "type": "statistics",
+        "group_by": group_by,
+        "total_comments": result.total_comments,
+        "breakdown": [
+            {
+                "value": item.value,
+                "count": item.count,
+                "percentage": item.percentage
+            }
+            for item in result.breakdown
+        ],
+        "filters": filters_applied if filters_applied else None
+    })
 
     # Format the result
     output = [f"Total comments matching filters: {result.total_comments}\n"]

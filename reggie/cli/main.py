@@ -254,6 +254,8 @@ def discuss(document_id: str, trace: bool, verbose: bool):
     """
     from ..agent import DiscussionAgent
     from ..agent.status import set_status_callback, clear_status_callback
+    from ..agent.visualizations import set_visualization_callback, clear_visualization_callback
+    from ..agent.renderers import render_single_dimension_chart
     from rich.markdown import Markdown
     from rich.panel import Panel
     from rich.live import Live
@@ -337,6 +339,9 @@ def discuss(document_id: str, trace: bool, verbose: bool):
 
         # Set up status callback to display status messages in gray
         set_status_callback(lambda msg: console.print(f"[dim]{msg}[/dim]"))
+
+        # Set up visualization callback to render charts
+        set_visualization_callback(lambda data: render_single_dimension_chart(data))
 
         # Display welcome message
         console.print()
@@ -426,8 +431,9 @@ def discuss(document_id: str, trace: bool, verbose: bool):
                 console.print(f"\n[red]Error:[/red] {e}\n")
                 logging.exception("Error in discussion")
 
-        # Clear status callback when session ends
+        # Clear callbacks when session ends
         clear_status_callback()
+        clear_visualization_callback()
 
     try:
         asyncio.run(_run_discussion())
