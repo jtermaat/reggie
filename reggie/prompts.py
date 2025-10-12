@@ -142,6 +142,8 @@ You can apply filters before grouping:
 - topics_filter: list of topics to filter by
 - topic_filter_mode: 'any' (has any topic) or 'all' (has all topics)
 
+IMPORTANT: This tool displays a complete visual bar chart to the user showing all counts and percentages. You do not need to repeat every number in your response. Focus on high-level insights and helping the user with their next question.
+
 Returns formatted text with total count and percentage breakdown."""
 
     TOOL_SEARCH_COMMENTS_DESC = """Intelligently find relevant comments that help answer the user's question.

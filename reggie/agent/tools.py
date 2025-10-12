@@ -106,6 +106,9 @@ async def get_statistics(
             f"  • {item.value}: {item.count} ({item.percentage}%)"
         )
 
+    # Add guidance to avoid redundancy with the visualization
+    output.append("\nNote: The user can also see those numbers. Focus your response on any summary conclusions, and how you can help them next.")
+
     return "\n".join(output)
 
 
