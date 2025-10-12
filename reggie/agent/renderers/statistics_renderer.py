@@ -185,8 +185,13 @@ def render_opposition_support_chart(data: Dict[str, Any]) -> None:
     right_space = terminal_width - center_pos - 2
 
     # Maximum bar width on each side (reserve chars for counts and spacing)
-    max_left_bar_width = max(left_space - 20, 10)
-    max_right_bar_width = max(right_space - 20, 10)
+    # Use the minimum of both sides to ensure perfect symmetry (100% left = 100% right)
+    max_bar_width = min(
+        max(left_space - 20, 10),
+        max(right_space - 20, 10)
+    )
+    max_left_bar_width = max_bar_width
+    max_right_bar_width = max_bar_width
 
     # Print column headers (centered in each column)
     headers = Text()
@@ -232,6 +237,29 @@ def render_opposition_support_chart(data: Dict[str, Any]) -> None:
     console.print(headers)
     console.print()  # Blank line after headers
 
+    # Calculate maximum width for count/percentage text for alignment
+    max_support_text_width = 0
+    max_opposition_text_width = 0
+    for category, sentiments in sorted_categories:
+        against_count = sentiments.get("against", 0)
+        for_count = sentiments.get("for", 0)
+        category_total = sum(sentiments.values())
+
+        if category_total == 0:
+            continue
+
+        against_pct = (against_count / category_total * 100) if category_total > 0 else 0
+        for_pct = (for_count / category_total * 100) if category_total > 0 else 0
+
+        # Calculate text widths
+        if for_count > 0:
+            support_text = f"{for_count} ({for_pct:.0f}%) "
+            max_support_text_width = max(max_support_text_width, len(support_text))
+
+        if against_count > 0:
+            opposition_text = f" {against_count} ({against_pct:.0f}%)"
+            max_opposition_text_width = max(max_opposition_text_width, len(opposition_text))
+
     # Render each category (in sorted order)
     for category, sentiments in sorted_categories:
         # Get counts for opposition (against) and support (for)
@@ -259,7 +287,11 @@ def render_opposition_support_chart(data: Dict[str, Any]) -> None:
             # Build opposition with arrow on LEFT: arrow, bars, count (ends at "|")
             opposition_text.append("◄", style=COLORS["sentiment_against"])
             opposition_text.append("━" * against_bar_width, style=COLORS["sentiment_against"])
-            opposition_text.append(f" {against_count} ({against_pct:.0f}%)", style=COLORS["sentiment_against"])
+            # Pad the count/percentage text to align all opposition bars
+            opp_text = f" {against_count} ({against_pct:.0f}%)"
+            opp_padding = " " * (max_opposition_text_width - len(opp_text))
+            opposition_text.append(opp_padding, style=COLORS["sentiment_against"])
+            opposition_text.append(opp_text, style=COLORS["sentiment_against"])
 
         # Build the row in columns: [Category Name] [Count] [Opposition] | [Support]
 
@@ -285,7 +317,8 @@ def render_opposition_support_chart(data: Dict[str, Any]) -> None:
         # We want: current_length + padding + opposition_length + 1 = center_pos
         padding_before_opposition = center_pos - current_length - opposition_length - 1
         if padding_before_opposition > 0:
-            left_content.append(" " * padding_before_opposition, style=COLORS["label"])
+            # Use dotted leaders to help visually connect category to its data
+            left_content.append("." * padding_before_opposition, style=COLORS["separator"])
 
         left_content.append(opposition_text)
 
@@ -297,7 +330,11 @@ def render_opposition_support_chart(data: Dict[str, Any]) -> None:
         right_content.append(" ", style=COLORS["label"])
 
         if for_count > 0:
-            right_content.append(f"{for_count} ({for_pct:.0f}%) ", style=COLORS["sentiment_for"])
+            # Pad the count/percentage text to align all support bars
+            support_text = f"{for_count} ({for_pct:.0f}%) "
+            support_padding = " " * (max_support_text_width - len(support_text))
+            right_content.append(support_text, style=COLORS["sentiment_for"])
+            right_content.append(support_padding, style=COLORS["sentiment_for"])
             right_content.append("━" * for_bar_width, style=COLORS["sentiment_for"])
             right_content.append("►", style=COLORS["sentiment_for"])
 
