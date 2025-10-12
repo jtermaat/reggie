@@ -24,20 +24,38 @@ When users ask questions:
 Be helpful, concise, and base your answers on the data from the tools."""
     )
 
+    # RAG graph prompts - Query generation
+    RAG_GENERATE_QUERY = ChatPromptTemplate.from_messages([
+        ("system", """You are generating a search query and filters to find relevant comments about regulations.
+
+Your task:
+1. Generate a verbose, detailed search query (complete phrases, not keywords) for semantic similarity search
+2. Choose appropriate metadata filters to narrow the search if helpful:
+   - sentiment_filter: 'for', 'against', 'mixed', or 'unclear'
+   - category_filter: e.g., 'Physicians & Surgeons', 'Individuals / Private Citizens', 'Hospitals & Health Systems'
+   - topics_filter: list of topics like 'reimbursement_payment', 'access_to_care', 'administrative_burden'
+   - topic_filter_mode: 'any' (comment discusses any topic) or 'all' (comment discusses all topics)
+
+Only apply filters when they clearly help answer the question. Leave filters null if not needed."""),
+        ("user", """Question: {question}
+
+{iteration_context}
+
+Generate a search query and appropriate filters to find relevant comments.""")
+    ])
+
     # RAG graph prompts - Relevance assessment
     RAG_RELEVANCE_ASSESSMENT = ChatPromptTemplate.from_messages([
         ("system", """You are assessing whether we have retrieved enough relevant information to answer a user's question about regulation comments.
 
-Review the chunks retrieved so far and determine if they contain enough information to answer the question.
-
-If insufficient information, suggest a verbose, detailed search query (complete phrases, not keywords) to find more relevant content."""),
+Review the chunks retrieved so far and make a binary decision: do we have enough information, or should we search again with a different query/filters?"""),
         ("user", """Question: {question}
 
 Retrieved chunks so far ({chunk_count} chunks from {comment_count} comments):
 
 {chunks_summary}
 
-Do we have enough information to answer this question? If not, suggest a different query.""")
+Do we have enough information to answer this question?""")
     ])
 
     # RAG graph prompts - Select relevant comments
@@ -126,22 +144,23 @@ You can apply filters before grouping:
 
 Returns formatted text with total count and percentage breakdown."""
 
-    TOOL_SEARCH_COMMENTS_DESC = """Search comment text to find what people actually said about specific topics.
+    TOOL_SEARCH_COMMENTS_DESC = """Intelligently find relevant comments that help answer the user's question.
 
-Use verbose, detailed queries (full phrases, not keywords) for better semantic matching.
+This tool will automatically:
+- Generate optimal search queries
+- Apply appropriate filters based on the question
+- Iteratively refine the search if needed
+- Return the most relevant comment passages with their IDs
+
+Simply provide the question you want to answer, and the tool will handle the rest.
 
 Good for questions like:
 - "What did people say about Medicare?"
 - "Give me examples of concerns about costs"
 - "What reasons did supporters give?"
+- "What do physicians think about reimbursement?"
 
-Filters:
-- sentiment_filter: only search comments with specific sentiment
-- category_filter: only search comments from specific category
-- topics_filter: only search comments discussing certain topics
-- topic_filter_mode: 'any' or 'all' when using topics_filter
-
-Returns relevant passages from matching comments with their IDs."""
+Returns complete relevant comments with their IDs."""
 
 
 # Create singleton instance for easy import

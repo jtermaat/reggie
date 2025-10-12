@@ -10,7 +10,7 @@ from ..db.connection import get_connection
 from ..db.repository import CommentRepository
 from ..exceptions import RAGSearchError
 from ..prompts import prompts
-from ..models.agent import GetStatisticsInput, SearchCommentsInput
+from ..models.agent import GetStatisticsInput
 from .rag_graph import run_rag_search
 from .status import emit_status
 
@@ -94,33 +94,19 @@ async def get_statistics(
 
 async def search_comments(
     document_id: str,
-    query: str,
-    sentiment_filter: Optional[str] = None,
-    category_filter: Optional[str] = None,
-    topics_filter: Optional[list] = None,
-    topic_filter_mode: str = "any"
+    question: str
 ) -> str:
     """Search comment text for relevant information.
 
+    The RAG system will autonomously generate optimal queries and filters.
+
     Args:
         document_id: The document to search within
-        query: The question or topic to search for
-        sentiment_filter: Optional sentiment filter
-        category_filter: Optional category filter
-        topics_filter: Optional list of topics to filter by
-        topic_filter_mode: 'any' or 'all' for topic filtering
+        question: The question to answer
 
     Returns:
         Formatted text with complete relevant comments and IDs
     """
-    filters = {}
-    if sentiment_filter:
-        filters["sentiment"] = sentiment_filter
-    if category_filter:
-        filters["category"] = category_filter
-    if topics_filter:
-        filters["topics"] = topics_filter
-
     # Add metadata to LangSmith trace
     run_tree = get_current_run_tree()
     if run_tree:
@@ -128,21 +114,16 @@ async def search_comments(
         run_tree.add_metadata({
             "document_id": document_id,
             "query_type": "rag_search",
-            "query_length": len(query),
-            "filters_applied": bool(filters),
-            "filters": filters,
-            "topic_filter_mode": topic_filter_mode
+            "question_length": len(question)
         })
 
     snippets = await run_rag_search(
         document_id=document_id,
-        question=query,
-        filters=filters,
-        topic_filter_mode=topic_filter_mode
+        question=question
     )
 
     if not snippets:
-        raise RAGSearchError(f"No relevant comments found for query: {query}")
+        raise RAGSearchError(f"No relevant comments found for question: {question}")
 
     # Format the results
     output = [f"Found {len(snippets)} relevant comments:\n"]
@@ -180,20 +161,20 @@ def create_discussion_tools(document_id: str) -> list[StructuredTool]:
             topic_filter_mode=topic_filter_mode
         )
 
-    async def search_comments_bound(
-        query: str,
-        sentiment_filter: Optional[str] = None,
-        category_filter: Optional[str] = None,
-        topics_filter: Optional[list] = None,
-        topic_filter_mode: str = "any"
-    ) -> str:
+    async def search_comments_bound(question: str) -> str:
+        """Find relevant comments that answer the given question."""
         return await search_comments(
             document_id=document_id,
-            query=query,
-            sentiment_filter=sentiment_filter,
-            category_filter=category_filter,
-            topics_filter=topics_filter,
-            topic_filter_mode=topic_filter_mode
+            question=question
+        )
+
+    # Create simple input schema for search_comments
+    from pydantic import BaseModel, Field
+
+    class SearchCommentsInput(BaseModel):
+        """Input schema for search_comments tool."""
+        question: str = Field(
+            description="The question you want to answer using comment data"
         )
 
     return [

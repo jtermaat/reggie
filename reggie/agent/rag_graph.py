@@ -11,7 +11,8 @@ from langsmith.run_helpers import get_current_run_tree
 
 from ..models.agent import (
     RAGState,
-    RAGSnippet
+    RAGSnippet,
+    HasEnoughInformation
 )
 from ..config import get_config
 from ..db.connection import get_connection
@@ -19,6 +20,7 @@ from ..db.repository import CommentRepository
 from ..exceptions import RAGSearchError
 from .chains import (
     create_vector_search_chain,
+    create_query_generation_chain,
     create_relevance_assessment_chain,
     create_comment_selection_chain
 )
@@ -38,12 +40,13 @@ def create_rag_graph() -> StateGraph:
         Compiled StateGraph
     """
     # Create reusable LCEL chains
+    query_generation_chain = create_query_generation_chain()
     relevance_chain = create_relevance_assessment_chain()
     selection_chain = create_comment_selection_chain()
 
     async def generate_query(state: RAGState) -> Dict[str, Any]:
-        """Generate or refine the search query based on user's question."""
-        logger.debug("Generating search query")
+        """Generate search query and filters using LLM."""
+        logger.debug("Generating search query and filters")
 
         # Get the user's question from messages
         user_messages = [m for m in state["messages"] if isinstance(m, HumanMessage)]
@@ -53,19 +56,37 @@ def create_rag_graph() -> StateGraph:
 
         question = user_messages[-1].content
 
-        # If this is first iteration, use the question directly as query
-        # Otherwise, we should already have a suggested query from assessment
+        # Build context about previous iterations if any
         iteration_count = state.get("iteration_count", 0)
         if iteration_count == 0:
-            query = question
+            iteration_context = "This is the first search iteration."
         else:
-            query = state.get("current_query", question)
+            all_retrieved = state.get("all_retrieved_chunks", {})
+            iteration_context = f"Previous search found {len(all_retrieved)} comments. Generate a different query and/or filters to find additional relevant information."
 
-        logger.debug(f"Using query: {query}")
+        # Use LLM to generate query and filters
+        query_gen = await query_generation_chain.ainvoke({
+            "question": question,
+            "iteration_context": iteration_context
+        })
+
+        logger.debug(f"Generated query: {query_gen.query}")
+        logger.debug(f"Filters: sentiment={query_gen.sentiment_filter}, category={query_gen.category_filter}, topics={query_gen.topics_filter}")
+
+        # Build filters dict from generated values
+        filters = {}
+        if query_gen.sentiment_filter:
+            filters["sentiment"] = query_gen.sentiment_filter
+        if query_gen.category_filter:
+            filters["category"] = query_gen.category_filter
+        if query_gen.topics_filter:
+            filters["topics"] = query_gen.topics_filter
 
         return {
-            "current_query": query,
-            "messages": [AIMessage(content=f"Searching for: {query}")]
+            "current_query": query_gen.query,
+            "filters": filters,
+            "topic_filter_mode": query_gen.topic_filter_mode,
+            "messages": [AIMessage(content=f"Searching for: {query_gen.query} (reasoning: {query_gen.reasoning})")]
         }
 
     async def search_vectors(state: RAGState) -> Dict[str, Any]:
@@ -152,13 +173,10 @@ def create_rag_graph() -> StateGraph:
             "chunks_summary": chr(10).join(chunks_summary[:config.chunks_summary_display_limit])
         })
 
-        logger.debug(f"Assessment: {assessment.has_enough_information}, reasoning: {assessment.reasoning}")
-
-        current_query = state.get("current_query", "")
-        new_query = assessment.suggested_query if assessment.needs_different_query else current_query
+        logger.debug(f"Assessment: {assessment.has_enough_information.value}, reasoning: {assessment.reasoning}")
 
         return {
-            "current_query": new_query,
+            "has_enough_information": assessment.has_enough_information,
             "iteration_count": state.get("iteration_count", 0) + 1,
             "messages": [AIMessage(content=f"Assessment: {assessment.reasoning}")]
         }
@@ -238,30 +256,21 @@ def create_rag_graph() -> StateGraph:
 
     def should_continue_searching(state: RAGState) -> Literal["search", "select"]:
         """Determine if we should continue searching or move to selection."""
-        config = get_config()
-
-        # Check if we've reached max iterations
+        # Check if we've reached max iterations (safety check)
         iteration_count = state.get("iteration_count", 0)
         max_iterations = state.get("max_iterations", 3)
         if iteration_count >= max_iterations:
             logger.debug("Reached max iterations, moving to selection")
             return "select"
 
-        # Check if we have any results
-        all_retrieved = state.get("all_retrieved_chunks", {})
-        if not all_retrieved:
-            logger.debug("No results yet, continuing search")
-            return "search"
-
-        # Parse the last assessment message to determine if we need more info
-        # In a real implementation, we'd store the assessment in state
-        # For now, if we have results and aren't at max iterations, move to select
-        if len(all_retrieved) >= config.min_comments_threshold:
-            logger.debug("Have enough comments, moving to selection")
+        # Check the binary decision from assess_relevance
+        has_enough = state.get("has_enough_information")
+        if has_enough == HasEnoughInformation.yes:
+            logger.debug("Assessment says we have enough information, moving to selection")
             return "select"
-
-        logger.debug("Need more information, continuing search")
-        return "search"
+        else:
+            logger.debug("Assessment says we need more information, continuing search")
+            return "search"
 
     # Build the graph
     workflow = StateGraph(RAGState)
@@ -300,17 +309,15 @@ def create_rag_graph() -> StateGraph:
 )
 async def run_rag_search(
     document_id: str,
-    question: str,
-    filters: Dict[str, Any] = None,
-    topic_filter_mode: str = "any"
+    question: str
 ) -> List[RAGSnippet]:
     """Run the RAG search graph to find relevant comments.
+
+    The graph will autonomously generate queries and filters based on the question.
 
     Args:
         document_id: The document to search within
         question: The user's question
-        filters: Optional filters (sentiment, category, topics)
-        topic_filter_mode: 'any' or 'all' for topic filtering
 
     Returns:
         List of RAGSnippet objects containing complete comment text
@@ -322,10 +329,7 @@ async def run_rag_search(
         run_tree.add_metadata({
             "document_id": document_id,
             "question": question,
-            "question_length": len(question),
-            "filters_applied": bool(filters),
-            "filters": filters or {},
-            "topic_filter_mode": topic_filter_mode
+            "question_length": len(question)
         })
 
     graph = create_rag_graph()
@@ -334,8 +338,8 @@ async def run_rag_search(
     initial_state: RAGState = {
         "document_id": document_id,
         "messages": [HumanMessage(content=question)],
-        "filters": filters or {},
-        "topic_filter_mode": topic_filter_mode,
+        "filters": {},
+        "topic_filter_mode": "any",
         "current_query": "",
         "search_results": [],
         "all_retrieved_chunks": {},
@@ -350,8 +354,7 @@ async def run_rag_search(
         "run_name": "rag_graph_execution",
         "tags": ["rag", "retrieval", f"doc-{document_id}"],
         "metadata": {
-            "max_iterations": config.max_rag_iterations,
-            "filters": filters or {}
+            "max_iterations": config.max_rag_iterations
         }
     }
 

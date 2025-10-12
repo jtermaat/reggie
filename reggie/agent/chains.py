@@ -10,6 +10,7 @@ from ..db.connection import get_connection
 from ..db.repository import CommentChunkRepository, CommentRepository
 from ..models.agent import (
     CommentChunkSearchResult,
+    QueryGeneration,
     RelevanceAssessment,
     RelevantCommentSelection,
     CommentSnippet
@@ -51,6 +52,23 @@ def create_categorization_chain() -> Runnable:
         prompts.CATEGORIZATION
         | llm.with_structured_output(CommentClassification)
     ).with_config({"run_name": "categorize_comment"})
+
+
+def create_query_generation_chain() -> Runnable:
+    """Create LCEL chain for RAG query and filter generation.
+
+    Returns:
+        Runnable that takes dict with question, iteration_context
+        and returns QueryGeneration
+    """
+    config = get_config()
+    llm = ChatOpenAI(model=config.rag_model)
+
+    # LCEL chain: prompt | llm with structured output
+    return (
+        prompts.RAG_GENERATE_QUERY
+        | llm.with_structured_output(QueryGeneration)
+    ).with_config({"run_name": "generate_query"})
 
 
 def create_relevance_assessment_chain() -> Runnable:

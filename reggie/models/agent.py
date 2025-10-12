@@ -2,9 +2,17 @@
 
 from typing import List, Annotated, Optional, TypedDict, Sequence, Literal
 from operator import add
+from enum import Enum
 from pydantic import BaseModel, Field
 from langchain_core.messages import BaseMessage
 from .comment import Category, Sentiment, Topic
+
+
+# Enums for RAG graph
+class HasEnoughInformation(str, Enum):
+    """Binary decision for whether enough information has been retrieved."""
+    yes = "yes"
+    no = "no"
 
 
 # Repository result models
@@ -67,11 +75,14 @@ class GetStatisticsInput(BaseModel):
     )
 
 
-class SearchCommentsInput(BaseModel):
-    """Input schema for search_comments tool."""
+
+
+# RAG graph models
+class QueryGeneration(BaseModel):
+    """Query and filter generation for RAG search."""
 
     query: str = Field(
-        description="The question or topic to search for in comment text"
+        description="The search query text to use for vector similarity search"
     )
     sentiment_filter: Optional[Sentiment] = Field(
         default=None,
@@ -89,24 +100,19 @@ class SearchCommentsInput(BaseModel):
         default="any",
         description="When using topics_filter: 'any' means has any topic, 'all' means has all topics"
     )
+    reasoning: str = Field(
+        description="Brief explanation of why this query and these filters were chosen"
+    )
 
 
-# RAG graph models
 class RelevanceAssessment(BaseModel):
     """Assessment of whether enough relevant information has been found."""
 
-    has_enough_information: bool = Field(
-        description="True if the retrieved chunks contain enough information to answer the question"
+    has_enough_information: HasEnoughInformation = Field(
+        description="Whether the retrieved chunks contain enough information to answer the question"
     )
     reasoning: str = Field(
         description="Brief explanation of why we do or don't have enough information"
-    )
-    needs_different_query: bool = Field(
-        description="True if we should try a different search query to find more relevant information"
-    )
-    suggested_query: str = Field(
-        default="",
-        description="If needs_different_query is True, suggest a new query to try"
     )
 
 
@@ -149,3 +155,4 @@ class RAGState(TypedDict, total=False):
     relevant_comment_ids: List[str]
     iteration_count: int
     max_iterations: int
+    has_enough_information: HasEnoughInformation
