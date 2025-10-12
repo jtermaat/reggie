@@ -379,6 +379,61 @@ class CommentRepository:
             row = await cur.fetchone()
             return row[0] if row else ""
 
+    @staticmethod
+    async def get_sentiment_by_category(
+        document_id: str,
+        conn
+    ) -> Dict[str, Dict[str, int]]:
+        """Get sentiment breakdown for each category.
+
+        This method returns a cross-tabulation of categories and sentiments,
+        showing how many comments of each sentiment exist for each category.
+
+        Args:
+            document_id: Document ID
+            conn: Database connection
+
+        Returns:
+            Nested dict: {category: {sentiment: count}}
+            Only includes categories with at least 1 comment.
+            Results are ordered by total comment count (descending).
+        """
+        async with conn.cursor() as cur:
+            # Query to get category, sentiment, and count
+            # Group by both dimensions and order by total comments per category
+            await cur.execute(
+                """
+                WITH category_totals AS (
+                    SELECT category, COUNT(*) as total
+                    FROM comments
+                    WHERE document_id = %s AND category IS NOT NULL
+                    GROUP BY category
+                )
+                SELECT
+                    c.category,
+                    c.sentiment,
+                    COUNT(*) as count
+                FROM comments c
+                INNER JOIN category_totals ct ON c.category = ct.category
+                WHERE c.document_id = %s AND c.category IS NOT NULL
+                GROUP BY c.category, c.sentiment, ct.total
+                ORDER BY ct.total DESC, c.category, c.sentiment
+                """,
+                (document_id, document_id)
+            )
+
+            rows = await cur.fetchall()
+
+            # Build nested dictionary structure
+            result: Dict[str, Dict[str, int]] = {}
+            for row in rows:
+                category, sentiment, count = row
+                if category not in result:
+                    result[category] = {}
+                result[category][sentiment or "unclear"] = count
+
+            return result
+
 
 class CommentChunkRepository:
     """Repository for comment chunk and embedding operations."""

@@ -442,6 +442,90 @@ def discuss(document_id: str, trace: bool, verbose: bool):
         logging.exception("Error starting discussion")
 
 
+@cli.command()
+@click.argument("document_id")
+def visualize(document_id: str):
+    """Display opposition/support visualization for a document.
+
+    DOCUMENT_ID: The document ID to visualize (e.g., CMS-2025-0304-0009)
+
+    Shows a breakdown of opposition (against) vs support (for) across
+    all commenter categories using centered horizontal bars.
+
+    Example:
+        reggie visualize CMS-2025-0304-0009
+    """
+    from ..db.connection import get_connection
+    from ..db.repository import CommentRepository
+    from ..agent.renderers import render_opposition_support_chart
+
+    async def _visualize():
+        """Generate and display the visualization."""
+        async with get_connection() as conn:
+            # Verify document exists
+            async with conn.cursor() as cur:
+                await cur.execute(
+                    "SELECT title FROM documents WHERE id = %s",
+                    (document_id,)
+                )
+                doc = await cur.fetchone()
+
+                if not doc:
+                    console.print(f"\n[red]Error: Document '{document_id}' not found.[/red]")
+                    console.print("\nUse 'reggie list' to see available documents.")
+                    console.print("Use 'reggie load <document_id>' to load a new document.\n")
+                    return
+
+                doc_title = doc[0]
+
+                # Check for processed comments
+                await cur.execute(
+                    """
+                    SELECT COUNT(DISTINCT c.id)
+                    FROM comments c
+                    WHERE c.document_id = %s
+                    """,
+                    (document_id,)
+                )
+                count = (await cur.fetchone())[0]
+
+                if count == 0:
+                    console.print(f"\n[yellow]Warning: Document '{document_id}' has no comments.[/yellow]")
+                    console.print("\nUse 'reggie load <document_id>' to load comments first.\n")
+                    return
+
+            # Get sentiment by category data
+            breakdown = await CommentRepository.get_sentiment_by_category(
+                document_id=document_id,
+                conn=conn
+            )
+
+            if not breakdown:
+                console.print(f"\n[yellow]No categorized comments found for document '{document_id}'.[/yellow]")
+                console.print("\nUse 'reggie process <document_id>' to process comments first.\n")
+                return
+
+            # Calculate total comments (for display)
+            total_comments = sum(
+                sum(sentiments.values()) for sentiments in breakdown.values()
+            )
+
+            # Render the visualization
+            render_opposition_support_chart({
+                "type": "opposition_support",
+                "document_id": document_id,
+                "document_title": doc_title,
+                "total_comments": total_comments,
+                "breakdown": breakdown
+            })
+
+    try:
+        asyncio.run(_visualize())
+    except Exception as e:
+        console.print(f"\n[red]Error:[/red] {e}")
+        logging.exception("Error generating visualization")
+
+
 def main():
     """Entry point for the CLI."""
     cli()

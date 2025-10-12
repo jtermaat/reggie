@@ -129,7 +129,7 @@ This will fetch all the comments for that document.
   Note: Processing uses OpenAI API calls and may take time depending on the number of comments.
 
 ### 7. Start a Discussion
-  
+
   ```bash
   reggie discuss CMS-2025-0304-0001
   ```
@@ -138,6 +138,20 @@ This will fetch all the comments for that document.
 
   - "What do physicians think about this rule?"
   - "What concerns were raised about reimbursement?"
+
+  **Note**: When the agent makes statistical queries, visualizations are automatically displayed showing bar charts of the results with color-coded sentiment breakdowns.
+
+### 8. Visualize Opposition/Support
+
+  ```bash
+  reggie visualize CMS-2025-0304-0001
+  ```
+
+  Displays a comprehensive opposition vs. support visualization showing sentiment breakdown across all commenter categories. The centered bar chart shows:
+  - Categories sorted by total comment count
+  - Opposition (red bars, left) and support (green bars, right) percentages
+  - Total comments per category
+  - Percentages based on total category comments (allowing users to deduce mixed/unclear sentiment)
 
 
 ## Tradeoffs and Next Steps
