@@ -282,6 +282,35 @@ class CommentRepository:
         return " AND ".join(where_clauses), params
 
     @staticmethod
+    def _sort_breakdown_for_visualization(
+        breakdown: List[StatisticsBreakdownItem],
+        group_by: str
+    ) -> List[StatisticsBreakdownItem]:
+        """Sort breakdown items for visualization display.
+
+        For sentiment: uses fixed order (for, against, mixed, unclear)
+        For category/topic: sorts alphabetically by value
+
+        Args:
+            breakdown: List of StatisticsBreakdownItem to sort
+            group_by: The dimension being grouped by
+
+        Returns:
+            Sorted list of StatisticsBreakdownItem
+        """
+        if group_by == "sentiment":
+            # Fixed order for sentiment
+            sentiment_order = {"for": 0, "against": 1, "mixed": 2, "unclear": 3}
+            # Sort by the defined order, putting any unknown sentiments at the end
+            return sorted(
+                breakdown,
+                key=lambda item: sentiment_order.get(item.value.lower(), 999)
+            )
+        else:
+            # Alphabetical order for categories and topics
+            return sorted(breakdown, key=lambda item: item.value.lower())
+
+    @staticmethod
     async def get_statistics(
         document_id: str,
         group_by: str,
@@ -323,7 +352,7 @@ class CommentRepository:
             )
             total = (await cur.fetchone())[0]
 
-            # Get breakdown
+            # Get breakdown - no ORDER BY, will sort in Python
             if group_by == "topic":
                 # Unnest topics array for counting
                 query = f"""
@@ -331,7 +360,6 @@ class CommentRepository:
                     FROM comments, UNNEST(topics) as topic
                     WHERE {where_clause}
                     GROUP BY topic
-                    ORDER BY count DESC
                 """
             else:
                 # Simple grouping
@@ -340,7 +368,6 @@ class CommentRepository:
                     FROM comments
                     WHERE {where_clause}
                     GROUP BY {group_by}
-                    ORDER BY count DESC
                 """
 
             await cur.execute(query, params)
@@ -354,6 +381,9 @@ class CommentRepository:
                     count=count,
                     percentage=round((count / total * 100) if total > 0 else 0, 1)
                 ))
+
+            # Apply custom sorting based on group_by dimension
+            breakdown = CommentRepository._sort_breakdown_for_visualization(breakdown, group_by)
 
             return StatisticsResponse(
                 total_comments=total,
