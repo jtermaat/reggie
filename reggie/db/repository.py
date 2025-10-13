@@ -127,6 +127,8 @@ class CommentRepository:
         category: Optional[str] = None,
         sentiment: Optional[str] = None,
         topics: Optional[List[str]] = None,
+        doctor_specialization: Optional[str] = None,
+        licensed_professional_type: Optional[str] = None,
         conn = None,
     ) -> None:
         """Store comment in database.
@@ -137,6 +139,8 @@ class CommentRepository:
             category: Classified category (optional)
             sentiment: Classified sentiment (optional)
             topics: Classified topics (optional)
+            doctor_specialization: Doctor specialization (optional)
+            licensed_professional_type: Licensed professional type (optional)
             conn: Database connection
         """
         attrs = comment_data.get("attributes", {})
@@ -146,14 +150,17 @@ class CommentRepository:
                 """
                 INSERT INTO comments (
                     id, document_id, comment_text, category, sentiment, topics,
+                    doctor_specialization, licensed_professional_type,
                     first_name, last_name, organization, posted_date, metadata
                 )
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 ON CONFLICT (id) DO UPDATE SET
                     comment_text = EXCLUDED.comment_text,
                     category = COALESCE(EXCLUDED.category, comments.category),
                     sentiment = COALESCE(EXCLUDED.sentiment, comments.sentiment),
                     topics = COALESCE(EXCLUDED.topics, comments.topics),
+                    doctor_specialization = COALESCE(EXCLUDED.doctor_specialization, comments.doctor_specialization),
+                    licensed_professional_type = COALESCE(EXCLUDED.licensed_professional_type, comments.licensed_professional_type),
                     metadata = EXCLUDED.metadata,
                     updated_at = NOW()
                 """,
@@ -164,6 +171,8 @@ class CommentRepository:
                     category,
                     sentiment,
                     topics,
+                    doctor_specialization,
+                    licensed_professional_type,
                     attrs.get("firstName"),
                     attrs.get("lastName"),
                     attrs.get("organization"),
@@ -178,6 +187,8 @@ class CommentRepository:
         category: str,
         sentiment: str,
         topics: Optional[List[str]] = None,
+        doctor_specialization: Optional[str] = None,
+        licensed_professional_type: Optional[str] = None,
         conn = None,
     ) -> None:
         """Update comment with classification results.
@@ -187,16 +198,20 @@ class CommentRepository:
             category: Classified category
             sentiment: Classified sentiment
             topics: Classified topics (optional)
+            doctor_specialization: Doctor specialization (optional)
+            licensed_professional_type: Licensed professional type (optional)
             conn: Database connection
         """
         async with conn.cursor() as cur:
             await cur.execute(
                 """
                 UPDATE comments
-                SET category = %s, sentiment = %s, topics = %s, updated_at = NOW()
+                SET category = %s, sentiment = %s, topics = %s,
+                    doctor_specialization = %s, licensed_professional_type = %s,
+                    updated_at = NOW()
                 WHERE id = %s
                 """,
-                (category, sentiment, topics, comment_id)
+                (category, sentiment, topics, doctor_specialization, licensed_professional_type, comment_id)
             )
 
     @staticmethod
@@ -247,7 +262,9 @@ class CommentRepository:
         sentiment_filter: Optional[str] = None,
         category_filter: Optional[str] = None,
         topics_filter: Optional[List[str]] = None,
-        topic_filter_mode: str = "any"
+        topic_filter_mode: str = "any",
+        doctor_specialization_filter: Optional[str] = None,
+        licensed_professional_type_filter: Optional[str] = None
     ) -> Tuple[str, List]:
         """Build WHERE clause and parameters for filtering comments.
 
@@ -257,6 +274,8 @@ class CommentRepository:
             category_filter: Filter by category
             topics_filter: Filter by topics
             topic_filter_mode: 'any' or 'all' for topic filtering
+            doctor_specialization_filter: Filter by doctor specialization
+            licensed_professional_type_filter: Filter by licensed professional type
 
         Returns:
             Tuple of (where_clause, params)
@@ -278,6 +297,14 @@ class CommentRepository:
             else:  # any
                 where_clauses.append("topics && %s::text[]")
             params.append(topics_filter)
+
+        if doctor_specialization_filter:
+            where_clauses.append("doctor_specialization = %s")
+            params.append(doctor_specialization_filter)
+
+        if licensed_professional_type_filter:
+            where_clauses.append("licensed_professional_type = %s")
+            params.append(licensed_professional_type_filter)
 
         return " AND ".join(where_clauses), params
 
@@ -318,18 +345,22 @@ class CommentRepository:
         sentiment_filter: Optional[str] = None,
         category_filter: Optional[str] = None,
         topics_filter: Optional[List[str]] = None,
-        topic_filter_mode: str = "any"
+        topic_filter_mode: str = "any",
+        doctor_specialization_filter: Optional[str] = None,
+        licensed_professional_type_filter: Optional[str] = None
     ) -> StatisticsResponse:
         """Get statistical breakdown of comments.
 
         Args:
             document_id: Document ID
-            group_by: What to group by - 'sentiment', 'category', or 'topic'
+            group_by: What to group by - 'sentiment', 'category', 'topic', 'doctor_specialization', or 'licensed_professional_type'
             conn: Database connection
             sentiment_filter: Optional sentiment filter
             category_filter: Optional category filter
             topics_filter: Optional topics filter
             topic_filter_mode: 'any' or 'all' for topic filtering
+            doctor_specialization_filter: Optional doctor specialization filter
+            licensed_professional_type_filter: Optional licensed professional type filter
 
         Returns:
             StatisticsResponse with total_comments and breakdown
@@ -337,11 +368,13 @@ class CommentRepository:
         Raises:
             ValueError: If group_by is not valid
         """
-        if group_by not in ["sentiment", "category", "topic"]:
-            raise ValueError("group_by must be 'sentiment', 'category', or 'topic'")
+        valid_group_by = ["sentiment", "category", "topic", "doctor_specialization", "licensed_professional_type"]
+        if group_by not in valid_group_by:
+            raise ValueError(f"group_by must be one of {valid_group_by}")
 
         where_clause, params = CommentRepository._build_filter_clause(
-            document_id, sentiment_filter, category_filter, topics_filter, topic_filter_mode
+            document_id, sentiment_filter, category_filter, topics_filter, topic_filter_mode,
+            doctor_specialization_filter, licensed_professional_type_filter
         )
 
         async with conn.cursor() as cur:
@@ -521,7 +554,9 @@ class CommentChunkRepository:
         sentiment_filter: Optional[str] = None,
         category_filter: Optional[str] = None,
         topics_filter: Optional[List[str]] = None,
-        topic_filter_mode: str = "any"
+        topic_filter_mode: str = "any",
+        doctor_specialization_filter: Optional[str] = None,
+        licensed_professional_type_filter: Optional[str] = None
     ) -> List[CommentChunkSearchResult]:
         """Search comment chunks using vector similarity.
 
@@ -534,13 +569,16 @@ class CommentChunkRepository:
             category_filter: Optional category filter
             topics_filter: Optional topics filter
             topic_filter_mode: 'any' or 'all' for topic filtering
+            doctor_specialization_filter: Optional doctor specialization filter
+            licensed_professional_type_filter: Optional licensed professional type filter
 
         Returns:
             List of CommentChunkSearchResult objects
         """
         # Build filter clause for comments table
         where_clause, filter_params = CommentRepository._build_filter_clause(
-            document_id, sentiment_filter, category_filter, topics_filter, topic_filter_mode
+            document_id, sentiment_filter, category_filter, topics_filter, topic_filter_mode,
+            doctor_specialization_filter, licensed_professional_type_filter
         )
 
         # Build params in the correct order for the query:

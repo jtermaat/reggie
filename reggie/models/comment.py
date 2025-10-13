@@ -4,7 +4,7 @@ from datetime import datetime
 from typing import Optional, List
 from enum import Enum
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 class Sentiment(str, Enum):
@@ -235,6 +235,8 @@ class Comment(BaseModel):
     category: Optional[str] = None
     sentiment: Optional[str] = None
     topics: Optional[List[str]] = None
+    doctor_specialization: Optional[str] = None
+    licensed_professional_type: Optional[str] = None
     first_name: Optional[str] = None
     last_name: Optional[str] = None
     organization: Optional[str] = None
@@ -288,6 +290,40 @@ class CommentClassification(BaseModel):
     topics: List[Topic] = Field(
         description="The topics discussed in the comment (can be multiple topics)"
     )
+    doctor_specialization: Optional[DoctorSpecialization] = Field(
+        default=None,
+        description="The medical specialization of the doctor (ONLY if category is 'Physicians & Surgeons')"
+    )
+    licensed_professional_type: Optional[LicensedProfessionalType] = Field(
+        default=None,
+        description="The type of licensed professional (ONLY if category is 'Other Licensed Clinicians')"
+    )
     reasoning: str = Field(
         description="Brief explanation of the classification decisions"
     )
+
+    @field_validator('doctor_specialization')
+    @classmethod
+    def validate_doctor_specialization(cls, v, info):
+        """Ensure doctor_specialization is only set when category is Physicians & Surgeons."""
+        if v is not None:
+            category = info.data.get('category')
+            if category != Category.PHYSICIANS_SURGEONS:
+                raise ValueError(
+                    f"doctor_specialization can only be set when category is 'Physicians & Surgeons', "
+                    f"but category is '{category.value if category else None}'"
+                )
+        return v
+
+    @field_validator('licensed_professional_type')
+    @classmethod
+    def validate_licensed_professional_type(cls, v, info):
+        """Ensure licensed_professional_type is only set when category is Other Licensed Clinicians."""
+        if v is not None:
+            category = info.data.get('category')
+            if category != Category.OTHER_LICENSED_CLINICIANS:
+                raise ValueError(
+                    f"licensed_professional_type can only be set when category is 'Other Licensed Clinicians', "
+                    f"but category is '{category.value if category else None}'"
+                )
+        return v

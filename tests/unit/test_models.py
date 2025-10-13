@@ -12,7 +12,9 @@ from reggie.models import (
     DocumentStats,
     Category,
     Sentiment,
-    Topic
+    Topic,
+    DoctorSpecialization,
+    LicensedProfessionalType
 )
 
 
@@ -167,6 +169,90 @@ class TestCommentClassificationModel:
                 # Missing reasoning
             )
         assert "reasoning" in str(exc_info.value)
+
+    def test_classification_with_doctor_specialization(self):
+        """Classification accepts doctor_specialization when category is PHYSICIANS_SURGEONS."""
+        classification = CommentClassification(
+            category=Category.PHYSICIANS_SURGEONS,
+            sentiment=Sentiment.FOR,
+            topics=[Topic.REIMBURSEMENT_PAYMENT],
+            doctor_specialization=DoctorSpecialization.CARDIOLOGY,
+            reasoning="Cardiologist supports reimbursement changes"
+        )
+        assert classification.category == Category.PHYSICIANS_SURGEONS
+        assert classification.doctor_specialization == DoctorSpecialization.CARDIOLOGY
+        assert classification.licensed_professional_type is None
+
+    def test_classification_with_licensed_professional_type(self):
+        """Classification accepts licensed_professional_type when category is OTHER_LICENSED_CLINICIANS."""
+        classification = CommentClassification(
+            category=Category.OTHER_LICENSED_CLINICIANS,
+            sentiment=Sentiment.AGAINST,
+            topics=[Topic.ADMINISTRATIVE_BURDEN],
+            licensed_professional_type=LicensedProfessionalType.NURSE_PRACTITIONER,
+            reasoning="Nurse practitioner opposes burden"
+        )
+        assert classification.category == Category.OTHER_LICENSED_CLINICIANS
+        assert classification.licensed_professional_type == LicensedProfessionalType.NURSE_PRACTITIONER
+        assert classification.doctor_specialization is None
+
+    def test_classification_rejects_doctor_specialization_for_non_physicians(self):
+        """Classification rejects doctor_specialization when category is not PHYSICIANS_SURGEONS."""
+        with pytest.raises(ValidationError) as exc_info:
+            CommentClassification(
+                category=Category.PATIENTS_CAREGIVERS,  # Not a physician
+                sentiment=Sentiment.FOR,
+                topics=[Topic.ACCESS_TO_CARE],
+                doctor_specialization=DoctorSpecialization.CARDIOLOGY,  # Should not be allowed
+                reasoning="Test"
+            )
+        assert "doctor_specialization" in str(exc_info.value)
+        assert "Physicians & Surgeons" in str(exc_info.value)
+
+    def test_classification_rejects_licensed_professional_type_for_non_clinicians(self):
+        """Classification rejects licensed_professional_type when category is not OTHER_LICENSED_CLINICIANS."""
+        with pytest.raises(ValidationError) as exc_info:
+            CommentClassification(
+                category=Category.HOSPITALS_HEALTH_SYSTEMS,  # Not a licensed clinician
+                sentiment=Sentiment.FOR,
+                topics=[Topic.QUALITY_PROGRAMS],
+                licensed_professional_type=LicensedProfessionalType.NURSE_PRACTITIONER,  # Should not be allowed
+                reasoning="Test"
+            )
+        assert "licensed_professional_type" in str(exc_info.value)
+        assert "Other Licensed Clinicians" in str(exc_info.value)
+
+    def test_classification_allows_null_subcategories(self):
+        """Classification allows null sub-categories regardless of category."""
+        # For physicians - null specialization is OK
+        classification1 = CommentClassification(
+            category=Category.PHYSICIANS_SURGEONS,
+            sentiment=Sentiment.FOR,
+            topics=[Topic.UNCLEAR],
+            doctor_specialization=None,  # Explicitly None
+            reasoning="Physician without clear specialization"
+        )
+        assert classification1.doctor_specialization is None
+
+        # For licensed clinicians - null type is OK
+        classification2 = CommentClassification(
+            category=Category.OTHER_LICENSED_CLINICIANS,
+            sentiment=Sentiment.AGAINST,
+            topics=[Topic.UNCLEAR],
+            licensed_professional_type=None,  # Explicitly None
+            reasoning="Clinician without clear type"
+        )
+        assert classification2.licensed_professional_type is None
+
+        # For other categories - both should be None (default)
+        classification3 = CommentClassification(
+            category=Category.INDIVIDUALS_PRIVATE_CITIZENS,
+            sentiment=Sentiment.MIXED,
+            topics=[Topic.UNCLEAR],
+            reasoning="Individual with no professional classification"
+        )
+        assert classification3.doctor_specialization is None
+        assert classification3.licensed_professional_type is None
 
 
 @pytest.mark.unit

@@ -11,13 +11,22 @@ class ReggiePrompts:
         """You are a helpful assistant helping users explore and analyze public comments on a regulation document.
 
 You have access to two tools:
-1. get_statistics - Get statistical breakdowns of comments by sentiment, category, or topic
+1. get_statistics - Get statistical breakdowns of comments by sentiment, category, topic, doctor specialization, or licensed professional type
 2. search_comments - Search through comment text to find what people said about specific topics
 
 The document you're discussing has ID: {document_id}
 
+Comments are classified with multiple dimensions:
+- Category: Physicians & Surgeons, Other Licensed Clinicians, Hospitals, Patients, Advocates, etc.
+- Sentiment: for, against, mixed, unclear
+- Topics: Multiple topics like reimbursement_payment, access_to_care, administrative_burden, etc.
+- Doctor Specialization (for physicians): cardiology, ophthalmology, family_medicine, etc.
+- Licensed Professional Type (for licensed clinicians): nurse_practitioner, physical_therapist, pharmacist, etc.
+
 When users ask questions:
 - For questions about counts, distributions, or "how many", use get_statistics
+  - You can filter by any dimension and group by any dimension
+  - Examples: "How many cardiologists support this?", "Show sentiment by doctor specialization"
 - For questions about what people said or specific content, use search_comments
 - You can combine both tools to provide comprehensive answers
 
@@ -93,6 +102,8 @@ Your task is to classify each comment by:
 1. **Category**: Identify the commenter's role/affiliation
 2. **Sentiment**: Determine their position on the regulation
 3. **Topics**: Identify all topics discussed in the comment (can be multiple)
+4. **Doctor Specialization** (CONDITIONAL): If category is "Physicians & Surgeons", specify their medical specialization
+5. **Licensed Professional Type** (CONDITIONAL): If category is "Other Licensed Clinicians", specify their professional type
 
 Guidelines for Category:
 - Look for explicit mentions of profession, organization, or role
@@ -121,6 +132,27 @@ Guidelines for Topics (select all that apply):
 - "legal_clarity": Legal concerns, regulatory clarity, compliance issues
 - "unclear": Comment topic cannot be determined
 
+Guidelines for Doctor Specialization (ONLY if category is "Physicians & Surgeons"):
+- Identify the specific medical specialization (e.g., cardiology, ophthalmology, family_medicine)
+- Look for explicit mentions of specialty, board certification, or practice focus
+- Consider terminology used (e.g., "retina specialist", "interventional cardiologist")
+- If specialization is clear, select the most specific applicable value
+- If not specified or unclear, use "unspecified"
+- Leave NULL if the category is NOT "Physicians & Surgeons"
+
+Guidelines for Licensed Professional Type (ONLY if category is "Other Licensed Clinicians"):
+- Identify the specific type of licensed healthcare professional
+- Common types include: nurse_practitioner, physician_assistant, registered_nurse, physical_therapist,
+  pharmacist, optometrist, certified_nurse_anesthetist, medical_assistant, etc.
+- Look for credentials (NP, PA, RN, PT, PharmD, OD, CRNA, CMA, etc.)
+- Look for job titles or role descriptions
+- If type is clear, select the most specific applicable value
+- If not specified or unclear, use "unspecified"
+- Leave NULL if the category is NOT "Other Licensed Clinicians"
+
+IMPORTANT: doctor_specialization and licensed_professional_type should ONLY be populated when their respective
+category conditions are met. Otherwise, leave them as null/None.
+
 Provide your classification along with brief reasoning.
 
 {context}"""
@@ -129,18 +161,29 @@ Provide your classification along with brief reasoning.
     # Tool descriptions - Optimized for LLM understanding
     # These are separate from code docstrings to allow independent optimization
 
-    TOOL_GET_STATISTICS_DESC = """Get statistical breakdown of comments grouped by sentiment, category, or topic.
+    TOOL_GET_STATISTICS_DESC = """Get statistical breakdown of comments grouped by sentiment, category, topic, doctor specialization, or licensed professional type.
 
 Use this tool when you need counts, percentages, or distributions. You can filter the data before grouping to answer questions like:
 - "How many comments from physicians support this?"
 - "What percentage of comments discuss reimbursement?"
 - "Break down opposition by category"
+- "How many cardiologists opposed this regulation?"
+- "Show me sentiment breakdown for nurse practitioners"
 
 You can apply filters before grouping:
 - sentiment_filter: 'for', 'against', 'mixed', 'unclear'
-- category_filter: e.g., 'Physicians & Surgeons', 'Individuals / Private Citizens'
+- category_filter: e.g., 'Physicians & Surgeons', 'Other Licensed Clinicians', 'Individuals / Private Citizens'
 - topics_filter: list of topics to filter by
 - topic_filter_mode: 'any' (has any topic) or 'all' (has all topics)
+- doctor_specialization_filter: filter to a specific medical specialization (e.g., 'cardiology', 'ophthalmology')
+- licensed_professional_type_filter: filter to a specific licensed professional type (e.g., 'nurse_practitioner', 'physical_therapist')
+
+You can group by:
+- 'sentiment': Group by for/against/mixed/unclear
+- 'category': Group by commenter category
+- 'topic': Group by discussion topics
+- 'doctor_specialization': Group by medical specialization (useful when looking at physician comments)
+- 'licensed_professional_type': Group by professional type (useful when looking at licensed clinician comments)
 
 IMPORTANT: This tool displays a complete visual bar chart to the user showing all counts and percentages. You do not need to repeat every number in your response. Focus on high-level insights and helping the user with their next question.
 

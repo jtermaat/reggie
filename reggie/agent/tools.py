@@ -24,17 +24,21 @@ async def get_statistics(
     sentiment_filter: Optional[str] = None,
     category_filter: Optional[str] = None,
     topics_filter: Optional[list] = None,
-    topic_filter_mode: str = "any"
+    topic_filter_mode: str = "any",
+    doctor_specialization_filter: Optional[str] = None,
+    licensed_professional_type_filter: Optional[str] = None
 ) -> str:
     """Get statistical breakdown of comments.
 
     Args:
         document_id: The document to query
-        group_by: What to group results by ('sentiment', 'category', or 'topic')
+        group_by: What to group results by ('sentiment', 'category', 'topic', 'doctor_specialization', or 'licensed_professional_type')
         sentiment_filter: Optional sentiment filter
         category_filter: Optional category filter
         topics_filter: Optional list of topics to filter by
         topic_filter_mode: 'any' or 'all' for topic filtering
+        doctor_specialization_filter: Optional doctor specialization filter
+        licensed_professional_type_filter: Optional licensed professional type filter
 
     Returns:
         Formatted string with statistical breakdown
@@ -51,6 +55,12 @@ async def get_statistics(
     if topics_filter:
         filter_parts.append(f"topics={topics_filter}")
         filters_applied["topics"] = topics_filter
+    if doctor_specialization_filter:
+        filter_parts.append(f"doctor_specialization={doctor_specialization_filter}")
+        filters_applied["doctor_specialization"] = doctor_specialization_filter
+    if licensed_professional_type_filter:
+        filter_parts.append(f"licensed_professional_type={licensed_professional_type_filter}")
+        filters_applied["licensed_professional_type"] = licensed_professional_type_filter
 
     if filter_parts:
         emit_status(f"querying comment statistics (filtered on {', '.join(filter_parts)})")
@@ -78,7 +88,9 @@ async def get_statistics(
             sentiment_filter=sentiment_filter,
             category_filter=category_filter,
             topics_filter=topics_filter,
-            topic_filter_mode=topic_filter_mode
+            topic_filter_mode=topic_filter_mode,
+            doctor_specialization_filter=doctor_specialization_filter,
+            licensed_professional_type_filter=licensed_professional_type_filter
         )
 
     # Emit visualization data
@@ -170,7 +182,9 @@ def create_discussion_tools(document_id: str) -> list[StructuredTool]:
         sentiment_filter: Optional[str] = None,
         category_filter: Optional[str] = None,
         topics_filter: Optional[list] = None,
-        topic_filter_mode: str = "any"
+        topic_filter_mode: str = "any",
+        doctor_specialization_filter: Optional[str] = None,
+        licensed_professional_type_filter: Optional[str] = None
     ) -> str:
         return await get_statistics(
             document_id=document_id,
@@ -178,7 +192,9 @@ def create_discussion_tools(document_id: str) -> list[StructuredTool]:
             sentiment_filter=sentiment_filter,
             category_filter=category_filter,
             topics_filter=topics_filter,
-            topic_filter_mode=topic_filter_mode
+            topic_filter_mode=topic_filter_mode,
+            doctor_specialization_filter=doctor_specialization_filter,
+            licensed_professional_type_filter=licensed_professional_type_filter
         )
 
     async def search_comments_bound(question: str) -> str:

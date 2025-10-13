@@ -232,6 +232,8 @@ class PipelineOrchestrator:
             classification["category"],
             classification["sentiment"],
             classification["topics"],
+            classification.get("doctor_specialization"),
+            classification.get("licensed_professional_type"),
             conn,
         )
 

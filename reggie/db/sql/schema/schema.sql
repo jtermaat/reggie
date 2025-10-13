@@ -25,6 +25,8 @@ CREATE TABLE IF NOT EXISTS comments (
     category TEXT,
     sentiment TEXT,
     topics TEXT[],
+    doctor_specialization TEXT,
+    licensed_professional_type TEXT,
     first_name TEXT,
     last_name TEXT,
     organization TEXT,
@@ -39,6 +41,8 @@ CREATE INDEX IF NOT EXISTS idx_comments_category ON comments(category);
 CREATE INDEX IF NOT EXISTS idx_comments_sentiment ON comments(sentiment);
 CREATE INDEX IF NOT EXISTS idx_comments_category_sentiment ON comments(category, sentiment);
 CREATE INDEX IF NOT EXISTS idx_comments_topics ON comments USING GIN (topics);
+CREATE INDEX IF NOT EXISTS idx_comments_doctor_specialization ON comments(doctor_specialization);
+CREATE INDEX IF NOT EXISTS idx_comments_licensed_professional_type ON comments(licensed_professional_type);
 
 -- Comment chunks table for embeddings
 CREATE TABLE IF NOT EXISTS comment_chunks (

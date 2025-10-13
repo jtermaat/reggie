@@ -5,7 +5,7 @@ from operator import add
 from enum import Enum
 from pydantic import BaseModel, Field
 from langchain_core.messages import BaseMessage
-from .comment import Category, Sentiment, Topic
+from .comment import Category, Sentiment, Topic, DoctorSpecialization, LicensedProfessionalType
 
 
 # Enums for RAG graph
@@ -54,8 +54,8 @@ class CommentChunkSearchResult(BaseModel):
 class GetStatisticsInput(BaseModel):
     """Input schema for get_statistics tool."""
 
-    group_by: Literal["sentiment", "category", "topic"] = Field(
-        description="What to group results by: 'sentiment', 'category', or 'topic'"
+    group_by: Literal["sentiment", "category", "topic", "doctor_specialization", "licensed_professional_type"] = Field(
+        description="What to group results by: 'sentiment', 'category', 'topic', 'doctor_specialization', or 'licensed_professional_type'"
     )
     sentiment_filter: Optional[Sentiment] = Field(
         default=None,
@@ -72,6 +72,14 @@ class GetStatisticsInput(BaseModel):
     topic_filter_mode: Literal["any", "all"] = Field(
         default="any",
         description="When using topics_filter: 'any' means has any topic, 'all' means has all topics"
+    )
+    doctor_specialization_filter: Optional[DoctorSpecialization] = Field(
+        default=None,
+        description="Optional filter for specific doctor specialization (only applicable when dealing with physicians)"
+    )
+    licensed_professional_type_filter: Optional[LicensedProfessionalType] = Field(
+        default=None,
+        description="Optional filter for specific licensed professional type (only applicable when dealing with licensed clinicians)"
     )
 
 
