@@ -15,6 +15,7 @@ from ..db import init_db
 from ..pipeline import DocumentLoader, CommentProcessor
 from ..config import get_config
 from ..logging_config import setup_logging
+from .cost_renderer import render_cost_report, render_session_cost_report
 
 # Load environment variables
 load_dotenv()
@@ -177,6 +178,10 @@ def process(document_id: str, batch_size: int, skip_processed: bool, trace: bool
         console.print(f"  • Chunks created: {stats['chunks_created']}")
         console.print(f"  • Errors: {stats['errors']}")
         console.print(f"  • Duration: {stats['duration']:.1f}s")
+
+        # Display cost report if available
+        if "cost_report" in stats:
+            render_cost_report(stats["cost_report"], console=console)
 
     except Exception as e:
         console.print(f"\n[red]Error:[/red] {e}")
@@ -365,6 +370,9 @@ def discuss(document_id: str, trace: bool, verbose: bool):
                     continue
 
                 if user_input.lower() in ["exit", "quit", "q"]:
+                    # Display cost report before exiting
+                    cost_report = agent.get_cost_report()
+                    render_session_cost_report(cost_report, console=console)
                     console.print("\n[dim]Goodbye![/dim]\n")
                     break
 
@@ -425,6 +433,9 @@ def discuss(document_id: str, trace: bool, verbose: bool):
                 #     console.print()
 
             except KeyboardInterrupt:
+                # Display cost report before exiting
+                cost_report = agent.get_cost_report()
+                render_session_cost_report(cost_report, console=console)
                 console.print("\n\n[dim]Goodbye![/dim]\n")
                 break
             except Exception as e:

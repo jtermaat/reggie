@@ -1,8 +1,11 @@
 """Statistics models"""
 
 from datetime import datetime
-from typing import Optional
+from typing import Optional, TYPE_CHECKING
 from pydantic import BaseModel
+
+if TYPE_CHECKING:
+    from .cost import CostReport
 
 
 class ProcessingStats(BaseModel):
@@ -15,6 +18,7 @@ class ProcessingStats(BaseModel):
     start_time: datetime
     end_time: Optional[datetime] = None
     duration: Optional[float] = None
+    cost_report: Optional["CostReport"] = None
 
     class Config:
         """Pydantic configuration."""

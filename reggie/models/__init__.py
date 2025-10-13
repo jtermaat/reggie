@@ -3,6 +3,7 @@
 from .document import Document, DocumentStats
 from .comment import Comment, CommentData, CommentClassification, Category, Sentiment, Topic
 from .stats import ProcessingStats
+from .cost import UsageCost, CostReport
 
 __all__ = [
     "Document",
@@ -14,4 +15,6 @@ __all__ = [
     "Sentiment",
     "Topic",
     "ProcessingStats",
+    "UsageCost",
+    "CostReport",
 ]

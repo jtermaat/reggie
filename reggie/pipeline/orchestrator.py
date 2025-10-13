@@ -11,6 +11,8 @@ from .categorizer import CommentCategorizer
 from .embedder import CommentEmbedder
 from ..db import get_connection, CommentRepository, CommentChunkRepository
 from ..models import CommentData
+from ..utils import CostTracker
+from ..config import get_config
 
 logger = logging.getLogger(__name__)
 
@@ -76,11 +78,12 @@ class PipelineOrchestrator:
             skip_processed: If True, only process comments that haven't been processed yet
 
         Returns:
-            Statistics about the processing
+            Statistics about the processing (includes cost_report)
         """
         logger.info(f"Processing comments for document {document_id}")
 
         stats = self._initialize_stats(document_id)
+        cost_tracker = CostTracker()
 
         try:
             async with get_connection(self.connection_string) as conn:
@@ -88,10 +91,12 @@ class PipelineOrchestrator:
 
                 if not rows:
                     self._log_no_comments(document_id, skip_processed)
+                    # Add empty cost report even when no comments
+                    stats["cost_report"] = cost_tracker.get_report()
                     return stats
 
                 logger.info(f"Found {len(rows)} comments to process")
-                await self._process_batches(rows, batch_size, conn, stats)
+                await self._process_batches(rows, batch_size, conn, stats, cost_tracker)
 
         except Exception as e:
             logger.error(f"Error processing comments: {e}")
@@ -99,6 +104,8 @@ class PipelineOrchestrator:
             raise
 
         finally:
+            # Add cost report to stats
+            stats["cost_report"] = cost_tracker.get_report()
             self._finalize_stats(document_id, stats)
 
         return stats
@@ -150,7 +157,7 @@ class PipelineOrchestrator:
             logger.warning(f"No comments found for document {document_id}")
 
     async def _process_batches(
-        self, comments: List[CommentData], batch_size: int, conn, stats: dict
+        self, comments: List[CommentData], batch_size: int, conn, stats: dict, cost_tracker: CostTracker
     ) -> None:
         """Process comments in batches.
 
@@ -159,12 +166,13 @@ class PipelineOrchestrator:
             batch_size: Number of comments per batch
             conn: Database connection
             stats: Statistics dictionary to update
+            cost_tracker: CostTracker instance for tracking API costs
         """
         for i in range(0, len(comments), batch_size):
             batch = comments[i : i + batch_size]
 
             try:
-                await self._process_single_batch(batch, conn, stats)
+                await self._process_single_batch(batch, conn, stats, cost_tracker)
                 await conn.commit()
                 self._log_batch_progress(i, batch_size, len(comments), stats)
 
@@ -173,7 +181,7 @@ class PipelineOrchestrator:
                 stats["errors"] += len(batch)
 
     async def _process_single_batch(
-        self, comment_data_list: List[CommentData], conn, stats: dict
+        self, comment_data_list: List[CommentData], conn, stats: dict, cost_tracker: CostTracker
     ) -> None:
         """Process a single batch of comments through the pipeline.
 
@@ -181,11 +189,20 @@ class PipelineOrchestrator:
             comment_data_list: List of CommentData to process
             conn: Database connection
             stats: Statistics dictionary to update
+            cost_tracker: CostTracker instance for tracking API costs
         """
-        classifications = await self.categorization_stage.process_batch(
-            comment_data_list
-        )
-        embeddings = await self.embedding_stage.process_batch(comment_data_list)
+        # Get config for model names
+        config = get_config()
+
+        # Track categorization costs
+        async with cost_tracker.track_operation_async("categorization", config.categorization_model):
+            classifications = await self.categorization_stage.process_batch(
+                comment_data_list
+            )
+
+        # Track embedding costs
+        async with cost_tracker.track_operation_async("embedding", config.embedding_model):
+            embeddings = await self.embedding_stage.process_batch(comment_data_list)
 
         for j, comment_data in enumerate(comment_data_list):
             try:

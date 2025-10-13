@@ -10,6 +10,8 @@ from langgraph.checkpoint.memory import MemorySaver
 from ..config import get_config
 from ..exceptions import AgentInvocationError
 from ..prompts import prompts
+from ..utils import CostTracker
+from ..models.cost import CostReport
 from .tools import create_discussion_tools
 
 logger = logging.getLogger(__name__)
@@ -39,6 +41,7 @@ class DiscussionAgent:
         self.document_id = document_id
         self.llm = llm
         self.checkpointer = MemorySaver()
+        self.cost_tracker = CostTracker()
         self.graph = self._create_graph()
 
     @classmethod
@@ -103,6 +106,9 @@ class DiscussionAgent:
             "document_id": self.document_id
         }
 
+        # Get config for model name
+        cfg = get_config()
+
         # Configure checkpointing with session/thread ID, metadata, and tags
         config = {
             "configurable": {"thread_id": session_id},
@@ -115,7 +121,9 @@ class DiscussionAgent:
             "tags": ["production", "discussion", f"doc-{self.document_id}", f"session-{session_id}"]
         }
 
-        result = await self.graph.ainvoke(state, config=config)
+        # Track costs for this invocation
+        async with self.cost_tracker.track_operation_async("agent", cfg.discussion_model):
+            result = await self.graph.ainvoke(state, config=config)
 
         # Get the last AI message
         ai_messages = [m for m in result["messages"] if isinstance(m, AIMessage)]
@@ -140,6 +148,9 @@ class DiscussionAgent:
             "document_id": self.document_id
         }
 
+        # Get config for model name
+        cfg = get_config()
+
         # Configure checkpointing with session/thread ID
         # Add metadata for LangSmith tracing (automatically captured by LangGraph)
         config = {
@@ -154,6 +165,16 @@ class DiscussionAgent:
             "tags": ["production", "discussion", "streaming", f"doc-{self.document_id}", f"session-{session_id}"]
         }
 
-        async for token, metadata in self.graph.astream(state, config=config, stream_mode="messages"):
-            # Yield tokens as they come from the LLM
-            yield token, metadata
+        # Track costs for streaming (note: streaming cost tracking may be limited)
+        async with self.cost_tracker.track_operation_async("agent", cfg.discussion_model):
+            async for token, metadata in self.graph.astream(state, config=config, stream_mode="messages"):
+                # Yield tokens as they come from the LLM
+                yield token, metadata
+
+    def get_cost_report(self) -> CostReport:
+        """Get the accumulated cost report for this session.
+
+        Returns:
+            CostReport with all costs tracked during the session
+        """
+        return self.cost_tracker.get_report()
