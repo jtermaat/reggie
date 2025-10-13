@@ -2,7 +2,7 @@
 
 import asyncio
 import logging
-from typing import Optional
+from typing import Optional, Callable
 from datetime import datetime
 
 import psycopg
@@ -35,6 +35,7 @@ class DocumentLoader:
         self,
         document_id: str,
         commit_every: int = 10,
+        progress_callback: Optional[Callable] = None,
     ) -> dict:
         """Load a document and all its comments into the database.
 
@@ -46,6 +47,7 @@ class DocumentLoader:
         Args:
             document_id: Document ID (e.g., "CMS-2025-0304-0009")
             commit_every: Commit to database after this many comments (default: 10)
+            progress_callback: Optional callback for progress updates
 
         Returns:
             Statistics about the loading process
@@ -79,11 +81,27 @@ class DocumentLoader:
                 await DocumentRepository.store_document(document_data, conn)
                 logger.info(f"Stored document metadata for {document_id}")
 
-                # 2. Fetch and store comments one at a time
-                logger.info("Starting sequential comment loading (4 seconds per comment)...")
+                # Notify progress callback that metadata is complete
+                if progress_callback:
+                    progress_callback("metadata_complete")
 
+                # 2. Get total comment count and initialize progress
+                total_comments_expected = await self.api_client.get_comment_count(object_id)
+                logger.info(f"Found {total_comments_expected} total comments")
+
+                # Initialize progress tracking
                 total_comments_fetched = 0
                 skipped_comments = 0
+
+                if progress_callback:
+                    progress_callback(
+                        "init_comments",
+                        total=total_comments_expected,
+                        skipped=0
+                    )
+
+                # 3. Fetch and store comments one at a time
+                logger.info("Starting sequential comment loading (4 seconds per comment)...")
 
                 async for comment_detail in self.api_client.get_all_comment_details(object_id):
                     try:
@@ -94,6 +112,14 @@ class DocumentLoader:
                             skipped_comments += 1
                             if skipped_comments % 100 == 0:
                                 logger.info(f"Skipped {skipped_comments} existing comments")
+
+                            # Update progress
+                            if progress_callback:
+                                progress_callback(
+                                    "update",
+                                    completed=total_comments_fetched + skipped_comments,
+                                    skipped=skipped_comments
+                                )
                             continue
 
                         # Store comment immediately
@@ -107,6 +133,14 @@ class DocumentLoader:
                         )
                         stats["comments_processed"] += 1
                         total_comments_fetched += 1
+
+                        # Update progress
+                        if progress_callback:
+                            progress_callback(
+                                "update",
+                                completed=total_comments_fetched + skipped_comments,
+                                skipped=skipped_comments
+                            )
 
                         # Commit every N comments so data is visible
                         if total_comments_fetched % commit_every == 0:
@@ -135,6 +169,14 @@ class DocumentLoader:
                     logger.warning(f"No comments found for document {document_id}")
 
                 logger.info("All comments loaded successfully")
+
+                # Notify progress callback that loading is complete
+                if progress_callback:
+                    progress_callback(
+                        "complete",
+                        total_loaded=total_comments_fetched,
+                        total_skipped=skipped_comments
+                    )
 
             finally:
                 await conn.close()

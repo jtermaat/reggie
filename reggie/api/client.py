@@ -92,6 +92,26 @@ class RegulationsAPIClient:
         data = await self._get(f"documents/{document_id}")
         return data.get("data", {})
 
+    async def get_comment_count(self, object_id: str) -> int:
+        """Get the total number of comments for a document.
+
+        This fetches only the first page to retrieve the total count from metadata.
+        Uses the same parameters as get_all_comments() to ensure compatibility.
+
+        Args:
+            object_id: Document object ID
+
+        Returns:
+            Total number of comments
+        """
+        response = await self.get_comments_page(
+            object_id,
+            page_number=1,
+            page_size=None,  # Use config default (typically 250)
+            sort="lastModifiedDate,documentId"  # Required by API for some documents
+        )
+        return response.get("meta", {}).get("totalElements", 0)
+
     async def get_comments_page(
         self,
         object_id: str,

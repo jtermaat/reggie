@@ -1,7 +1,7 @@
 """Pipeline orchestrator for coordinating comment processing stages"""
 
 import logging
-from typing import List, Optional
+from typing import List, Optional, Callable
 from datetime import datetime
 
 import psycopg
@@ -69,6 +69,7 @@ class PipelineOrchestrator:
         document_id: str,
         batch_size: int = 10,
         skip_processed: bool = False,
+        progress_callback: Optional[Callable] = None,
     ) -> dict:
         """Process comments through the pipeline.
 
@@ -76,6 +77,7 @@ class PipelineOrchestrator:
             document_id: Document ID
             batch_size: Number of comments to process in parallel
             skip_processed: If True, only process comments that haven't been processed yet
+            progress_callback: Optional callback for progress updates
 
         Returns:
             Statistics about the processing (includes cost_report)
@@ -96,7 +98,9 @@ class PipelineOrchestrator:
                     return stats
 
                 logger.info(f"Found {len(rows)} comments to process")
-                await self._process_batches(rows, batch_size, conn, stats, cost_tracker)
+                await self._process_batches(
+                    rows, batch_size, conn, stats, cost_tracker, progress_callback
+                )
 
         except Exception as e:
             logger.error(f"Error processing comments: {e}")
@@ -107,6 +111,14 @@ class PipelineOrchestrator:
             # Add cost report to stats
             stats["cost_report"] = cost_tracker.get_report()
             self._finalize_stats(document_id, stats)
+
+            # Notify progress callback that processing is complete
+            if progress_callback:
+                progress_callback(
+                    "complete",
+                    total_processed=stats["comments_processed"],
+                    total_chunks=stats["chunks_created"]
+                )
 
         return stats
 
@@ -157,7 +169,13 @@ class PipelineOrchestrator:
             logger.warning(f"No comments found for document {document_id}")
 
     async def _process_batches(
-        self, comments: List[CommentData], batch_size: int, conn, stats: dict, cost_tracker: CostTracker
+        self,
+        comments: List[CommentData],
+        batch_size: int,
+        conn,
+        stats: dict,
+        cost_tracker: CostTracker,
+        progress_callback: Optional[Callable] = None,
     ) -> None:
         """Process comments in batches.
 
@@ -167,6 +185,7 @@ class PipelineOrchestrator:
             conn: Database connection
             stats: Statistics dictionary to update
             cost_tracker: CostTracker instance for tracking API costs
+            progress_callback: Optional callback for progress updates
         """
         for i in range(0, len(comments), batch_size):
             batch = comments[i : i + batch_size]
@@ -175,6 +194,14 @@ class PipelineOrchestrator:
                 await self._process_single_batch(batch, conn, stats, cost_tracker)
                 await conn.commit()
                 self._log_batch_progress(i, batch_size, len(comments), stats)
+
+                # Update progress callback
+                if progress_callback:
+                    progress_callback(
+                        "update",
+                        completed=stats["comments_processed"],
+                        chunks_created=stats["chunks_created"]
+                    )
 
             except Exception as e:
                 logger.error(f"Error processing batch: {e}")

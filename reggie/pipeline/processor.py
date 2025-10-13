@@ -4,7 +4,7 @@ This module provides backward compatibility while delegating to the orchestrator
 """
 
 import logging
-from typing import Optional
+from typing import Optional, Callable
 
 from .orchestrator import PipelineOrchestrator
 
@@ -39,6 +39,7 @@ class CommentProcessor:
         document_id: str,
         batch_size: int = 10,
         skip_processed: bool = False,
+        progress_callback: Optional[Callable] = None,
     ) -> dict:
         """Process raw comments: categorize, chunk, and embed.
 
@@ -48,6 +49,7 @@ class CommentProcessor:
             document_id: Document ID
             batch_size: Number of comments to process in parallel
             skip_processed: If True, only process comments that haven't been processed yet
+            progress_callback: Optional callback for progress updates
 
         Returns:
             Statistics about the processing
@@ -56,4 +58,5 @@ class CommentProcessor:
             document_id=document_id,
             batch_size=batch_size,
             skip_processed=skip_processed,
+            progress_callback=progress_callback,
         )

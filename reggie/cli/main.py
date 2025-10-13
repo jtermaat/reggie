@@ -16,6 +16,12 @@ from ..pipeline import DocumentLoader, CommentProcessor
 from ..config import get_config
 from ..logging_config import setup_logging
 from .cost_renderer import render_cost_report, render_session_cost_report
+from .progress import (
+    LoadingProgressDisplay,
+    ProcessingProgressDisplay,
+    create_loading_progress_callback,
+    create_processing_progress_callback,
+)
 
 # Load environment variables
 load_dotenv()
@@ -71,21 +77,22 @@ def load(document_id: str):
     Example:
         reggie load CMS-2025-0304-0009
     """
-    async def _load():
-        loader = DocumentLoader()
-        stats = await loader.load_document(document_id)
-        return stats
-
-    console.print(f"\n[bold]Loading document:[/bold] {document_id}\n")
-
     try:
-        with Progress(
-            SpinnerColumn(),
-            TextColumn("[progress.description]{task.description}"),
-            console=console,
-        ) as progress:
-            task = progress.add_task("Processing...", total=None)
+        # Create progress display
+        display = LoadingProgressDisplay(document_id, console=console)
+
+        async def _load():
+            loader = DocumentLoader()
+            # Create progress callback
+            callback = create_loading_progress_callback(display)
+            stats = await loader.load_document(document_id, progress_callback=callback)
+            return stats
+
+        # Use context manager for log suppression and cleanup
+        with display:
+            display.start()
             stats = asyncio.run(_load())
+            display.stop()
 
         console.print("\n[bold green]✓[/bold green] Document loaded successfully!\n")
         console.print("[bold]Statistics:[/bold]")
@@ -148,29 +155,47 @@ def process(document_id: str, batch_size: int, skip_processed: bool, trace: bool
             console.print(f"  - {var}")
         return
 
-    async def _process():
-        processor = CommentProcessor()
-        stats = await processor.process_comments(
-            document_id,
-            batch_size=batch_size,
-            skip_processed=skip_processed
-        )
-        return stats
-
-    console.print(f"\n[bold]Processing comments for:[/bold] {document_id}")
-    if skip_processed:
-        console.print("[dim]Skipping already processed comments[/dim]\n")
-    else:
-        console.print()
-
     try:
-        with Progress(
-            SpinnerColumn(),
-            TextColumn("[progress.description]{task.description}"),
-            console=console,
-        ) as progress:
-            task = progress.add_task("Processing...", total=None)
+        # Get comment count first to initialize progress display
+        async def _get_count():
+            from ..db.connection import get_connection
+            from ..db.repository import CommentRepository
+
+            async with get_connection() as conn:
+                return await CommentRepository.count_comments_for_document(
+                    document_id, conn, skip_processed=skip_processed
+                )
+
+        total_comments = asyncio.run(_get_count())
+
+        if total_comments == 0:
+            if skip_processed:
+                console.print(f"\n[yellow]No unprocessed comments found for document '{document_id}'.[/yellow]\n")
+            else:
+                console.print(f"\n[yellow]No comments found for document '{document_id}'.[/yellow]")
+                console.print("\nUse 'reggie load <document_id>' to load comments first.\n")
+            return
+
+        # Create progress display
+        display = ProcessingProgressDisplay(document_id, console=console)
+
+        async def _process():
+            processor = CommentProcessor()
+            # Create progress callback
+            callback = create_processing_progress_callback(display)
+            stats = await processor.process_comments(
+                document_id,
+                batch_size=batch_size,
+                skip_processed=skip_processed,
+                progress_callback=callback
+            )
+            return stats
+
+        # Use context manager for log suppression and cleanup
+        with display:
+            display.start(total=total_comments, skip_processed=skip_processed)
             stats = asyncio.run(_process())
+            display.stop()
 
         console.print("\n[bold green]✓[/bold green] Comments processed successfully!\n")
         console.print("[bold]Statistics:[/bold]")

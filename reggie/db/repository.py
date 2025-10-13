@@ -121,6 +121,47 @@ class CommentRepository:
             return await cur.fetchone() is not None
 
     @staticmethod
+    async def count_comments_for_document(
+        document_id: str,
+        conn,
+        skip_processed: bool = False,
+    ) -> int:
+        """Count comments for a document.
+
+        Args:
+            document_id: Document ID
+            conn: Database connection
+            skip_processed: If True, only count comments that haven't been processed yet
+
+        Returns:
+            Number of comments
+        """
+        async with conn.cursor() as cur:
+            if skip_processed:
+                # Count only comments that haven't been categorized yet
+                await cur.execute(
+                    """
+                    SELECT COUNT(*)
+                    FROM comments
+                    WHERE document_id = %s
+                      AND category IS NULL
+                    """,
+                    (document_id,)
+                )
+            else:
+                # Count all comments
+                await cur.execute(
+                    """
+                    SELECT COUNT(*)
+                    FROM comments
+                    WHERE document_id = %s
+                    """,
+                    (document_id,)
+                )
+            row = await cur.fetchone()
+            return row[0] if row else 0
+
+    @staticmethod
     async def store_comment(
         comment_data: dict,
         document_id: str,
