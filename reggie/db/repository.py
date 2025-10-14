@@ -538,6 +538,73 @@ class CommentRepository:
 
             return result
 
+    @staticmethod
+    async def get_sentiment_by_specialization(
+        document_id: str,
+        field_name: str,
+        category_filter: str,
+        conn
+    ) -> Dict[str, Dict[str, int]]:
+        """Get sentiment breakdown for specializations within a category.
+
+        This method returns a cross-tabulation of specializations (either
+        doctor_specialization or licensed_professional_type) and sentiments,
+        filtered to a specific category.
+
+        Args:
+            document_id: Document ID
+            field_name: Field to group by ('doctor_specialization' or 'licensed_professional_type')
+            category_filter: Category to filter by (e.g., 'Physicians & Surgeons')
+            conn: Database connection
+
+        Returns:
+            Nested dict: {specialization: {sentiment: count}}
+            Only includes specializations with at least 1 comment.
+            Results are ordered by total comment count (descending).
+        """
+        # Validate field_name for SQL injection protection
+        valid_fields = ["doctor_specialization", "licensed_professional_type"]
+        if field_name not in valid_fields:
+            raise ValueError(f"field_name must be one of {valid_fields}")
+
+        async with conn.cursor() as cur:
+            # Query to get specialization, sentiment, and count within the filtered category
+            # Group by both dimensions and order by total comments per specialization
+            query = f"""
+                WITH specialization_totals AS (
+                    SELECT {field_name}, COUNT(*) as total
+                    FROM comments
+                    WHERE document_id = %s
+                      AND category = %s
+                      AND {field_name} IS NOT NULL
+                    GROUP BY {field_name}
+                )
+                SELECT
+                    c.{field_name},
+                    c.sentiment,
+                    COUNT(*) as count
+                FROM comments c
+                INNER JOIN specialization_totals st ON c.{field_name} = st.{field_name}
+                WHERE c.document_id = %s
+                  AND c.category = %s
+                  AND c.{field_name} IS NOT NULL
+                GROUP BY c.{field_name}, c.sentiment, st.total
+                ORDER BY st.total DESC, c.{field_name}, c.sentiment
+            """
+
+            await cur.execute(query, (document_id, category_filter, document_id, category_filter))
+            rows = await cur.fetchall()
+
+            # Build nested dictionary structure
+            result: Dict[str, Dict[str, int]] = {}
+            for row in rows:
+                specialization, sentiment, count = row
+                if specialization not in result:
+                    result[specialization] = {}
+                result[specialization][sentiment or "unclear"] = count
+
+            return result
+
 
 class CommentChunkRepository:
     """Repository for comment chunk and embedding operations."""

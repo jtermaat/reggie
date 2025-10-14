@@ -577,7 +577,7 @@ def visualize(document_id: str):
     """
     from ..db.connection import get_connection
     from ..db.repository import CommentRepository
-    from ..agent.renderers import render_opposition_support_chart
+    from ..agent.renderers import render_opposition_support_chart, render_opposition_support_by_specialization
 
     async def _visualize():
         """Generate and display the visualization."""
@@ -630,7 +630,7 @@ def visualize(document_id: str):
                 sum(sentiments.values()) for sentiments in breakdown.values()
             )
 
-            # Render the visualization
+            # SECTION 1: Render the category breakdown visualization
             render_opposition_support_chart({
                 "type": "opposition_support",
                 "document_id": document_id,
@@ -638,6 +638,46 @@ def visualize(document_id: str):
                 "total_comments": total_comments,
                 "breakdown": breakdown
             })
+
+            # SECTION 2: Render physician specializations breakdown
+            physician_category = "Physicians & Surgeons"
+            if physician_category in breakdown:
+                physician_breakdown = await CommentRepository.get_sentiment_by_specialization(
+                    document_id=document_id,
+                    field_name="doctor_specialization",
+                    category_filter=physician_category,
+                    conn=conn
+                )
+
+                if physician_breakdown:
+                    # Calculate total for physician category
+                    physician_total = sum(breakdown[physician_category].values())
+                    render_opposition_support_by_specialization(
+                        section_title="Physician Specialization",
+                        category_name=physician_category,
+                        category_total=physician_total,
+                        breakdown=physician_breakdown
+                    )
+
+            # SECTION 3: Render licensed professional types breakdown
+            licensed_professional_category = "Other Licensed Clinicians"
+            if licensed_professional_category in breakdown:
+                licensed_professional_breakdown = await CommentRepository.get_sentiment_by_specialization(
+                    document_id=document_id,
+                    field_name="licensed_professional_type",
+                    category_filter=licensed_professional_category,
+                    conn=conn
+                )
+
+                if licensed_professional_breakdown:
+                    # Calculate total for licensed professional category
+                    licensed_professional_total = sum(breakdown[licensed_professional_category].values())
+                    render_opposition_support_by_specialization(
+                        section_title="Licensed Professional Type",
+                        category_name=licensed_professional_category,
+                        category_total=licensed_professional_total,
+                        breakdown=licensed_professional_breakdown
+                    )
 
     try:
         asyncio.run(_visualize())

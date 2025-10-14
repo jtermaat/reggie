@@ -237,6 +237,21 @@ def render_opposition_support_chart(data: Dict[str, Any]) -> None:
     console.print(headers)
     console.print()  # Blank line after headers
 
+    # Find maximum counts across all categories for scaling
+    max_opposition_count = 0
+    max_support_count = 0
+    for category, sentiments in sorted_categories:
+        against_count = sentiments.get("against", 0)
+        for_count = sentiments.get("for", 0)
+        max_opposition_count = max(max_opposition_count, against_count)
+        max_support_count = max(max_support_count, for_count)
+
+    # Ensure we have at least 1 to avoid division by zero
+    if max_opposition_count == 0:
+        max_opposition_count = 1
+    if max_support_count == 0:
+        max_support_count = 1
+
     # Calculate maximum width for count/percentage text for alignment
     max_support_text_width = 0
     max_opposition_text_width = 0
@@ -277,9 +292,9 @@ def render_opposition_support_chart(data: Dict[str, Any]) -> None:
         against_pct = (against_count / category_total * 100) if category_total > 0 else 0
         for_pct = (for_count / category_total * 100) if category_total > 0 else 0
 
-        # Calculate bar widths based on percentages
-        against_bar_width = int((against_pct / 100) * max_left_bar_width)
-        for_bar_width = int((for_pct / 100) * max_right_bar_width)
+        # Calculate bar widths based on absolute counts (not percentages)
+        against_bar_width = int((against_count / max_opposition_count) * max_left_bar_width)
+        for_bar_width = int((for_count / max_support_count) * max_right_bar_width)
 
         # Build opposition content (right-aligned, ending at center)
         opposition_text = Text()
@@ -331,6 +346,227 @@ def render_opposition_support_chart(data: Dict[str, Any]) -> None:
 
         if for_count > 0:
             # Pad the count/percentage text to align all support bars
+            support_text = f"{for_count} ({for_pct:.0f}%) "
+            support_padding = " " * (max_support_text_width - len(support_text))
+            right_content.append(support_text, style=COLORS["sentiment_for"])
+            right_content.append(support_padding, style=COLORS["sentiment_for"])
+            right_content.append("━" * for_bar_width, style=COLORS["sentiment_for"])
+            right_content.append("►", style=COLORS["sentiment_for"])
+
+        # Combine and print
+        full_line = Text()
+        full_line.append(left_content)
+        full_line.append(right_content)
+        console.print(full_line)
+
+    console.print()  # Add blank line after chart
+
+
+def render_opposition_support_by_specialization(
+    section_title: str,
+    category_name: str,
+    category_total: int,
+    breakdown: Dict[str, Dict[str, int]]
+) -> None:
+    """Render opposition/support breakdown for specializations within a category.
+
+    This function displays sentiment breakdown for specializations (either
+    physician specializations or licensed professional types) using the same
+    centered bar chart style as the category breakdown.
+
+    Args:
+        section_title: The title for this section (e.g., "Physician Specializations")
+        category_name: The parent category name (e.g., "Physicians & Surgeons")
+        category_total: Total number of comments in the parent category
+        breakdown: Dict[specialization, Dict[sentiment, count]]
+    """
+    # Build title with professional, contextual information
+    title = Text()
+    title.append(f"\nOpposition/Support by {section_title}\n", style=COLORS["title"])
+    title.append(
+        f"Filtered to category '{category_name}' — {category_total} comment{'s' if category_total != 1 else ''} total\n\n",
+        style=COLORS["subtitle"]
+    )
+
+    console.print(title)
+
+    if not breakdown:
+        console.print(f"[{COLORS['subtitle']}]No specialization data available for this category[/{COLORS['subtitle']}]\n")
+        return
+
+    # Sort specializations by total comment count (descending)
+    sorted_specializations = sorted(
+        breakdown.items(),
+        key=lambda item: sum(item[1].values()),
+        reverse=True
+    )
+
+    # Calculate center position and available space
+    terminal_width = console.width
+    center_pos = terminal_width // 2
+
+    # Layout: [Specialization Name] [Total Count] [Opposition bars...] | [Support bars...]
+    # Column widths
+    max_specialization_name_length = max(len(str(spec)) for spec in breakdown.keys())
+    specialization_col_width = min(max_specialization_name_length + 2, 45)
+
+    max_total_count = max(sum(sentiments.values()) for sentiments in breakdown.values())
+    count_col_width = len(str(max_total_count)) + 4  # Add padding
+
+    # Space from end of count column to center (for opposition bars)
+    left_space = center_pos - specialization_col_width - count_col_width - 2
+    # Space from center to edge (for support bars)
+    right_space = terminal_width - center_pos - 2
+
+    # Maximum bar width on each side (reserve chars for counts and spacing)
+    # Use the minimum of both sides to ensure perfect symmetry
+    max_bar_width = min(
+        max(left_space - 20, 10),
+        max(right_space - 20, 10)
+    )
+    max_left_bar_width = max_bar_width
+    max_right_bar_width = max_bar_width
+
+    # Print column headers
+    headers = Text()
+
+    # Header 1: "Specialization" - centered in specialization_col_width
+    header1 = "Specialization"
+    header1_padding = (specialization_col_width - len(header1)) // 2
+    headers.append(" " * header1_padding, style=COLORS["label"])
+    headers.append(header1, style=COLORS["subtitle"])
+    headers.append(" " * (specialization_col_width - len(header1) - header1_padding), style=COLORS["label"])
+
+    # Header 2: "Total Comments" - centered in count_col_width
+    header2 = "Total Comments"
+    header2_padding = (count_col_width - len(header2)) // 2
+    headers.append(" " * header2_padding, style=COLORS["label"])
+    headers.append(header2, style=COLORS["subtitle"])
+    headers.append(" " * (count_col_width - len(header2) - header2_padding), style=COLORS["label"])
+
+    # Header 3: "Comments Opposing" - should end near center
+    header3 = "Comments Opposing"
+    current_pos = specialization_col_width + count_col_width
+    available_space = center_pos - current_pos - 1
+    header3_padding_left = (available_space - len(header3)) // 2
+    header3_padding_right = available_space - len(header3) - header3_padding_left
+
+    headers.append(" " * header3_padding_left, style=COLORS["label"])
+    headers.append(header3, style=COLORS["subtitle"])
+    headers.append(" " * header3_padding_right, style=COLORS["label"])
+
+    # Add space before "Comments Supporting" header
+    headers.append(" ", style=COLORS["label"])
+
+    # Header 4: "Comments Supporting"
+    header4 = " Comments Supporting"
+    headers.append(header4, style=COLORS["subtitle"])
+
+    console.print(headers)
+    console.print()  # Blank line after headers
+
+    # Find maximum counts across all specializations for scaling
+    max_opposition_count = 0
+    max_support_count = 0
+    for specialization, sentiments in sorted_specializations:
+        against_count = sentiments.get("against", 0)
+        for_count = sentiments.get("for", 0)
+        max_opposition_count = max(max_opposition_count, against_count)
+        max_support_count = max(max_support_count, for_count)
+
+    # Ensure we have at least 1 to avoid division by zero
+    if max_opposition_count == 0:
+        max_opposition_count = 1
+    if max_support_count == 0:
+        max_support_count = 1
+
+    # Calculate maximum width for count/percentage text for alignment
+    max_support_text_width = 0
+    max_opposition_text_width = 0
+    for specialization, sentiments in sorted_specializations:
+        against_count = sentiments.get("against", 0)
+        for_count = sentiments.get("for", 0)
+        specialization_total = sum(sentiments.values())
+
+        if specialization_total == 0:
+            continue
+
+        against_pct = (against_count / specialization_total * 100) if specialization_total > 0 else 0
+        for_pct = (for_count / specialization_total * 100) if specialization_total > 0 else 0
+
+        # Calculate text widths
+        if for_count > 0:
+            support_text = f"{for_count} ({for_pct:.0f}%) "
+            max_support_text_width = max(max_support_text_width, len(support_text))
+
+        if against_count > 0:
+            opposition_text = f" {against_count} ({against_pct:.0f}%)"
+            max_opposition_text_width = max(max_opposition_text_width, len(opposition_text))
+
+    # Render each specialization (in sorted order)
+    for specialization, sentiments in sorted_specializations:
+        # Get counts for opposition (against) and support (for)
+        against_count = sentiments.get("against", 0)
+        for_count = sentiments.get("for", 0)
+
+        # Calculate total for this specialization (ALL sentiments)
+        specialization_total = sum(sentiments.values())
+
+        if specialization_total == 0:
+            continue
+
+        # Calculate percentages based on TOTAL comments in specialization
+        against_pct = (against_count / specialization_total * 100) if specialization_total > 0 else 0
+        for_pct = (for_count / specialization_total * 100) if specialization_total > 0 else 0
+
+        # Calculate bar widths based on absolute counts (not percentages)
+        against_bar_width = int((against_count / max_opposition_count) * max_left_bar_width)
+        for_bar_width = int((for_count / max_support_count) * max_right_bar_width)
+
+        # Build opposition content (right-aligned, ending at center)
+        opposition_text = Text()
+        if against_count > 0:
+            opposition_text.append("◄", style=COLORS["sentiment_against"])
+            opposition_text.append("━" * against_bar_width, style=COLORS["sentiment_against"])
+            opp_text = f" {against_count} ({against_pct:.0f}%)"
+            opp_padding = " " * (max_opposition_text_width - len(opp_text))
+            opposition_text.append(opp_padding, style=COLORS["sentiment_against"])
+            opposition_text.append(opp_text, style=COLORS["sentiment_against"])
+
+        # Column 1: Specialization name (format with spaces for readability)
+        # Convert snake_case to Title Case for display
+        display_name = specialization.replace("_", " ").title()
+        display_name = display_name[:specialization_col_width-2] if len(display_name) > specialization_col_width-2 else display_name
+        specialization_padding = " " * (specialization_col_width - len(display_name))
+
+        # Column 2: Total count (right-aligned in gray)
+        count_str = str(specialization_total)
+        count_padding = " " * (count_col_width - len(count_str))
+
+        # Build left side content before opposition bars
+        left_content = Text()
+        left_content.append(specialization_padding, style=COLORS["label"])
+        left_content.append(display_name, style=COLORS["category_name"])
+        left_content.append(count_padding, style=COLORS["label"])
+        left_content.append(count_str, style=COLORS["subtitle"])
+
+        # Calculate padding before opposition bars
+        current_length = len(left_content.plain)
+        opposition_length = len(opposition_text.plain)
+        padding_before_opposition = center_pos - current_length - opposition_length - 1
+        if padding_before_opposition > 0:
+            left_content.append("." * padding_before_opposition, style=COLORS["separator"])
+
+        left_content.append(opposition_text)
+
+        # Center separator
+        left_content.append("|", style=COLORS["separator"])
+
+        # Build right side content (support)
+        right_content = Text()
+        right_content.append(" ", style=COLORS["label"])
+
+        if for_count > 0:
             support_text = f"{for_count} ({for_pct:.0f}%) "
             support_padding = " " * (max_support_text_width - len(support_text))
             right_content.append(support_text, style=COLORS["sentiment_for"])
