@@ -33,8 +33,8 @@ class ReggieConfig(BaseSettings):
     # Embeddings
     embedding_model: str = Field(default="text-embedding-3-small")
     embedding_dimension: int = Field(default=1536)
-    chunk_size: int = Field(default=1000)
-    chunk_overlap: int = Field(default=200)
+    chunk_size: int = Field(default=256)
+    chunk_overlap: int = Field(default=40)
 
     # Processing
     categorization_model: str = Field(default="gpt-5-nano")
