@@ -11,6 +11,15 @@ from ..models.cost import UsageCost, CostReport
 logger = logging.getLogger(__name__)
 
 
+# OpenAI Embedding Model Pricing (per 1,000 tokens)
+# Source: https://openai.com/api/pricing/
+EMBEDDING_PRICING = {
+    "text-embedding-3-small": 0.00002,   # $0.020 / 1M tokens
+    "text-embedding-3-large": 0.00013,   # $0.130 / 1M tokens
+    "text-embedding-ada-002": 0.00010,   # $0.100 / 1M tokens
+}
+
+
 class CostTracker:
     """Tracks OpenAI API costs using LangChain's callback system.
 
@@ -149,6 +158,53 @@ class CostTracker:
 
         report.calculate_total()
         return report
+
+    def record_embedding_tokens(self, tokens: int, model_name: str) -> None:
+        """Manually record embedding tokens and calculate cost.
+
+        This is used for embedding operations since LangChain's get_openai_callback
+        does not track embedding API calls.
+
+        Args:
+            tokens: Number of tokens processed
+            model_name: Name of the embedding model used
+
+        Raises:
+            ValueError: If model pricing is not known
+        """
+        if model_name not in EMBEDDING_PRICING:
+            logger.warning(
+                f"Unknown embedding model '{model_name}'. "
+                f"Known models: {list(EMBEDDING_PRICING.keys())}. "
+                f"Cost will not be tracked."
+            )
+            return
+
+        # Calculate cost: (tokens / 1000) * price_per_1k_tokens
+        cost_usd = (tokens / 1000.0) * EMBEDDING_PRICING[model_name]
+
+        # Create UsageCost object
+        usage = UsageCost(
+            prompt_tokens=tokens,  # For embeddings, all tokens are "input" tokens
+            completion_tokens=0,   # Embeddings don't have completion tokens
+            total_tokens=tokens,
+            cost_usd=cost_usd,
+            model_name=model_name
+        )
+
+        # Add to embedding costs
+        self.embedding_costs.append(usage)
+
+        # Also track by model
+        if model_name in self._costs_by_model:
+            self._costs_by_model[model_name] = self._costs_by_model[model_name] + usage
+        else:
+            self._costs_by_model[model_name] = usage
+
+        logger.debug(
+            f"Recorded embedding cost: {tokens} tokens, "
+            f"${cost_usd:.6f} ({model_name})"
+        )
 
     def reset(self) -> None:
         """Reset all tracked costs."""

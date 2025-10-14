@@ -221,15 +221,19 @@ class PipelineOrchestrator:
         # Get config for model names
         config = get_config()
 
-        # Track categorization costs
+        # Track categorization costs (using callback - this works)
         async with cost_tracker.track_operation_async("categorization", config.categorization_model):
             classifications = await self.categorization_stage.process_batch(
                 comment_data_list
             )
 
-        # Track embedding costs
-        async with cost_tracker.track_operation_async("embedding", config.embedding_model):
-            embeddings = await self.embedding_stage.process_batch(comment_data_list)
+        # Process embeddings (callback doesn't work for embeddings, so we track manually)
+        embeddings = await self.embedding_stage.process_batch(comment_data_list)
+
+        # Manually record embedding costs by summing up tokens from all embeddings
+        total_embedding_tokens = sum(emb.get("tokens", 0) for emb in embeddings)
+        if total_embedding_tokens > 0:
+            cost_tracker.record_embedding_tokens(total_embedding_tokens, config.embedding_model)
 
         for j, comment_data in enumerate(comment_data_list):
             try:

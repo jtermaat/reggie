@@ -90,13 +90,14 @@ class EmbeddingStage(PipelineStage):
         Returns:
             Tuple of (comment_data, embedding_result_dict)
         """
-        chunks_with_embeddings = await self.embedder.chunk_and_embed(
+        chunks_with_embeddings, tokens = await self.embedder.chunk_and_embed(
             comment_data.comment_text
         )
 
         result = {
             "chunks": chunks_with_embeddings,
             "num_chunks": len(chunks_with_embeddings),
+            "tokens": tokens,
         }
 
         return comment_data, result
@@ -189,7 +190,7 @@ class BatchEmbeddingStage(PipelineStage):
             comment_data_list: List of comment data to embed
 
         Returns:
-            List of embedding result dicts
+            List of embedding result dicts (each with 'chunks', 'num_chunks', 'tokens')
         """
         # Convert CommentData to dict format expected by embedder
         comment_dicts = [
@@ -200,15 +201,16 @@ class BatchEmbeddingStage(PipelineStage):
             for cd in comment_data_list
         ]
 
-        all_chunks = await self.embedder.process_comments_batch(
+        all_chunks_and_tokens = await self.embedder.process_comments_batch(
             comment_dicts, batch_size=len(comment_dicts)
         )
 
         results = []
-        for chunks_with_embeddings in all_chunks:
+        for chunks_with_embeddings, tokens in all_chunks_and_tokens:
             result = {
                 "chunks": chunks_with_embeddings,
                 "num_chunks": len(chunks_with_embeddings),
+                "tokens": tokens,
             }
             results.append(result)
 

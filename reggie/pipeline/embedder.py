@@ -94,7 +94,7 @@ class CommentEmbedder:
         self,
         chunks: List[str],
         batch_size: int = None,
-    ) -> List[List[float]]:
+    ) -> Tuple[List[List[float]], int]:
         """Embed text chunks asynchronously.
 
         Args:
@@ -102,21 +102,26 @@ class CommentEmbedder:
             batch_size: Number of chunks to embed in each batch. If None, uses config default.
 
         Returns:
-            List of embedding vectors
+            Tuple of (embedding vectors, total_tokens)
         """
         if not chunks:
-            return []
+            return [], 0
 
         config = get_config()
         batch_size = batch_size or config.embedding_batch_size
 
         all_embeddings = []
+        total_tokens = 0
 
         # Process in batches to respect rate limits
         for i in range(0, len(chunks), batch_size):
             batch = chunks[i:i + batch_size]
 
             try:
+                # Count tokens for this batch
+                batch_tokens = sum(self._count_tokens(chunk) for chunk in batch)
+                total_tokens += batch_tokens
+
                 # Use LangChain's async embed method
                 embeddings = await self.embeddings.aembed_documents(batch)
                 all_embeddings.extend(embeddings)
@@ -130,37 +135,38 @@ class CommentEmbedder:
                 # Add zero vectors for failed embeddings
                 all_embeddings.extend([[0.0] * self.embedding_dimension] * len(batch))
 
-        return all_embeddings
+        return all_embeddings, total_tokens
 
     async def chunk_and_embed(
         self,
         text: str,
-    ) -> List[Tuple[str, List[float]]]:
+    ) -> Tuple[List[Tuple[str, List[float]]], int]:
         """Chunk text and generate embeddings.
 
         Args:
             text: Text to process
 
         Returns:
-            List of (chunk_text, embedding) tuples
+            Tuple of (list of (chunk_text, embedding) tuples, total_tokens)
         """
         # Chunk the text
         chunks = self.chunk_text(text)
 
         if not chunks:
-            return []
+            return [], 0
 
         # Embed the chunks
-        embeddings = await self.embed_chunks(chunks)
+        embeddings, total_tokens = await self.embed_chunks(chunks)
 
         # Pair chunks with embeddings
-        return list(zip(chunks, embeddings))
+        chunks_with_embeddings = list(zip(chunks, embeddings))
+        return chunks_with_embeddings, total_tokens
 
     async def process_comments_batch(
         self,
         comments: List[Dict],
         batch_size: int = None,
-    ) -> List[List[Tuple[str, List[float]]]]:
+    ) -> List[Tuple[List[Tuple[str, List[float]]], int]]:
         """Process multiple comments in parallel.
 
         Args:
@@ -168,7 +174,7 @@ class CommentEmbedder:
             batch_size: Number of comments to process in parallel. If None, uses config default.
 
         Returns:
-            List of results, where each result is a list of (chunk, embedding) tuples
+            List of results, where each result is a tuple of (list of (chunk, embedding) tuples, total_tokens)
         """
         config = get_config()
         batch_size = batch_size or config.default_batch_size
@@ -190,7 +196,7 @@ class CommentEmbedder:
             for result in batch_results:
                 if isinstance(result, Exception):
                     logger.error(f"Error processing comment: {result}")
-                    results.append([])  # Empty result for failed comment
+                    results.append(([], 0))  # Empty result for failed comment
                 else:
                     results.append(result)
 

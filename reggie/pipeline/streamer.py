@@ -195,13 +195,17 @@ class DocumentStreamer:
                             organization=attrs.get("organization"),
                         )
 
-                        # PROCESS: Categorize the comment
+                        # PROCESS: Categorize the comment (callback tracks this automatically)
                         async with cost_tracker.track_operation_async("categorization", config.categorization_model):
                             _, classification_result = await self.categorization_stage.process(comment_data)
 
-                        # PROCESS: Embed the comment
-                        async with cost_tracker.track_operation_async("embedding", config.embedding_model):
-                            _, embedding_result = await self.embedding_stage.process(comment_data)
+                        # PROCESS: Embed the comment (callback doesn't track embeddings, so we track manually)
+                        _, embedding_result = await self.embedding_stage.process(comment_data)
+
+                        # Manually record embedding cost
+                        embedding_tokens = embedding_result.get("tokens", 0)
+                        if embedding_tokens > 0:
+                            cost_tracker.record_embedding_tokens(embedding_tokens, config.embedding_model)
 
                         # SAVE: Store comment with classification
                         await CommentRepository.store_comment(
