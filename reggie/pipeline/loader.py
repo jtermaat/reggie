@@ -103,11 +103,11 @@ class DocumentLoader:
                 # 3. Fetch and store comments one at a time
                 logger.info("Starting sequential comment loading (4 seconds per comment)...")
 
-                async for comment_detail in self.api_client.get_all_comment_details(object_id):
+                async for comment in self.api_client.get_all_comments(object_id):
                     try:
-                        comment_id = comment_detail.get("id")
+                        comment_id = comment.get("id")
 
-                        # Skip if comment already exists
+                        # Skip if comment already exists (check before fetching details to save API calls)
                         if await CommentRepository.comment_exists(comment_id, conn):
                             skipped_comments += 1
                             if skipped_comments % 100 == 0:
@@ -121,6 +121,9 @@ class DocumentLoader:
                                     skipped=skipped_comments
                                 )
                             continue
+
+                        # Fetch full comment details (this incurs the rate limit delay)
+                        comment_detail = await self.api_client.get_comment_details(comment_id)
 
                         # Store comment immediately
                         await CommentRepository.store_comment(
