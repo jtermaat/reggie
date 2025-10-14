@@ -11,7 +11,7 @@ import psycopg
 from ..api import RegulationsAPIClient
 from ..db import get_connection_string, DocumentRepository, CommentRepository, CommentChunkRepository
 from ..models import CommentData
-from ..utils import CostTracker
+from ..utils import CostTracker, ErrorCollector
 from ..config import get_config
 from .stages import BatchCategorizationStage, BatchEmbeddingStage
 from .categorizer import CommentCategorizer
@@ -37,6 +37,7 @@ class DocumentStreamer:
         embedding_stage: BatchEmbeddingStage,
         connection_string: str,
         rate_limit_delay: float = 4.0,
+        error_collector: Optional[ErrorCollector] = None,
     ):
         """Initialize the document streamer.
 
@@ -46,12 +47,18 @@ class DocumentStreamer:
             embedding_stage: Stage for embedding comments
             connection_string: PostgreSQL connection string
             rate_limit_delay: Minimum seconds between API calls (default: 4.0)
+            error_collector: Optional error collector for aggregating errors
         """
         self.api_client = api_client
         self.categorization_stage = categorization_stage
         self.embedding_stage = embedding_stage
         self.connection_string = connection_string
         self.rate_limit_delay = rate_limit_delay
+        self.error_collector = error_collector
+
+        # Pass error collector to stages
+        if error_collector:
+            self.categorization_stage.set_error_collector(error_collector)
 
     @classmethod
     def create(
@@ -59,6 +66,7 @@ class DocumentStreamer:
         reg_api_key: Optional[str] = None,
         openai_api_key: Optional[str] = None,
         connection_string: Optional[str] = None,
+        error_collector: Optional[ErrorCollector] = None,
     ) -> "DocumentStreamer":
         """Factory method to create a DocumentStreamer with default configuration.
 
@@ -66,6 +74,7 @@ class DocumentStreamer:
             reg_api_key: Regulations.gov API key
             openai_api_key: OpenAI API key
             connection_string: PostgreSQL connection string
+            error_collector: Optional error collector for aggregating errors
 
         Returns:
             Configured DocumentStreamer instance
@@ -92,6 +101,7 @@ class DocumentStreamer:
             embedding_stage=embedding_stage,
             connection_string=conn_str,
             rate_limit_delay=config.reg_api_request_delay,
+            error_collector=error_collector,
         )
 
     async def _produce_comments(
@@ -153,7 +163,17 @@ class DocumentStreamer:
                     logger.debug(f"Producer: Queued comment {comment_id}")
 
                 except Exception as e:
-                    logger.error(f"Producer: Error loading comment {comment_id}: {e}")
+                    # Log at DEBUG level for file logs
+                    logger.debug(f"Producer: Error loading comment {comment_id}: {e}")
+
+                    # Collect error for summary (if collector available)
+                    if self.error_collector:
+                        self.error_collector.collect(
+                            error_type="Streaming Load Error",
+                            message=str(e),
+                            context={"comment_id": comment_id}
+                        )
+
                     stats["errors"] += 1
 
             logger.info("Producer: Finished loading all comments")
@@ -252,7 +272,16 @@ class DocumentStreamer:
                     current_batch_details = []
 
             except Exception as e:
-                logger.error(f"Consumer: Error processing batch: {e}")
+                # Log at DEBUG level for file logs
+                logger.debug(f"Consumer: Error processing batch: {e}")
+
+                # Collect error for summary (if collector available)
+                if self.error_collector:
+                    self.error_collector.collect(
+                        error_type="Streaming Batch Processing Error",
+                        message=str(e)
+                    )
+
                 stats["errors"] += len(current_batch)
                 # Clear batch and continue
                 current_batch = []
@@ -327,7 +356,17 @@ class DocumentStreamer:
                     stats["chunks_created"] += embedding["num_chunks"]
 
                 except Exception as e:
-                    logger.error(f"Consumer: Error storing comment {comment_data.id}: {e}")
+                    # Log at DEBUG level for file logs
+                    logger.debug(f"Consumer: Error storing comment {comment_data.id}: {e}")
+
+                    # Collect error for summary (if collector available)
+                    if self.error_collector:
+                        self.error_collector.collect(
+                            error_type="Streaming Storage Error",
+                            message=str(e),
+                            context={"comment_id": comment_data.id}
+                        )
+
                     stats["errors"] += 1
 
             # Commit batch

@@ -8,6 +8,7 @@ from ..config import get_config
 from ..models import CommentClassification, Category, Sentiment, Topic
 from ..exceptions import ConfigurationException
 from ..agent.chains import create_categorization_chain
+from ..utils import ErrorCollector
 
 logger = logging.getLogger(__name__)
 
@@ -15,11 +16,12 @@ logger = logging.getLogger(__name__)
 class CommentCategorizer:
     """LangChain-based comment categorizer using LCEL chains."""
 
-    def __init__(self, openai_api_key: Optional[str] = None):
+    def __init__(self, openai_api_key: Optional[str] = None, error_collector: Optional[ErrorCollector] = None):
         """Initialize the categorizer.
 
         Args:
             openai_api_key: OpenAI API key. If None, reads from config/env.
+            error_collector: Optional error collector for aggregating errors
         """
         config = get_config()
 
@@ -31,6 +33,7 @@ class CommentCategorizer:
 
         # Create LCEL chain for categorization
         self.chain = create_categorization_chain()
+        self.error_collector = error_collector
 
     def _build_comment_context(
         self,
@@ -94,7 +97,17 @@ class CommentCategorizer:
             result = await self.chain.ainvoke({"context": context})
             return result
         except Exception as e:
-            logger.error(f"Error categorizing comment: {e}")
+            # Log at DEBUG level for file logs
+            logger.debug(f"Error categorizing comment: {e}")
+
+            # Collect error for summary (if collector available)
+            if hasattr(self, 'error_collector') and self.error_collector:
+                self.error_collector.collect(
+                    error_type="Categorization Error",
+                    message=str(e),
+                    context={"comment_preview": comment_text[:100] if comment_text else "N/A"}
+                )
+
             # Return default classification on error
             from ..models import Topic
             return CommentClassification(
@@ -142,7 +155,16 @@ class CommentCategorizer:
             # Handle exceptions in results
             for result in batch_results:
                 if isinstance(result, Exception):
-                    logger.error(f"Batch categorization error: {result}")
+                    # Log at DEBUG level for file logs
+                    logger.debug(f"Batch categorization error: {result}")
+
+                    # Collect error for summary (if collector available)
+                    if self.error_collector:
+                        self.error_collector.collect(
+                            error_type="Batch Categorization Error",
+                            message=str(result)
+                        )
+
                     # Add default classification for failed items
                     from ..models import Topic
                     results.append(

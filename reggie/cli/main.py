@@ -87,7 +87,7 @@ def load(document_id: str):
         display = LoadingProgressDisplay(document_id, console=console)
 
         async def _load():
-            loader = DocumentLoader()
+            loader = DocumentLoader(error_collector=display.error_collector)
             # Create progress callback
             callback = create_loading_progress_callback(display)
             stats = await loader.load_document(document_id, progress_callback=callback)
@@ -185,7 +185,7 @@ def process(document_id: str, batch_size: int, skip_processed: bool, trace: bool
         display = ProcessingProgressDisplay(document_id, console=console)
 
         async def _process():
-            processor = CommentProcessor()
+            processor = CommentProcessor(error_collector=display.error_collector)
             # Create progress callback
             callback = create_processing_progress_callback(display)
             stats = await processor.process_comments(
@@ -267,7 +267,7 @@ def stream(document_id: str, trace: bool):
         display = StreamingProgressDisplay(document_id, console=console)
 
         async def _stream():
-            streamer = DocumentStreamer.create()
+            streamer = DocumentStreamer.create(error_collector=display.error_collector)
             # Create progress callback
             callback = create_streaming_progress_callback(display)
             stats = await streamer.stream_document(document_id, progress_callback=callback)

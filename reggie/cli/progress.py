@@ -18,6 +18,8 @@ from rich.progress import (
 )
 from rich.console import Console
 
+from ..utils import ErrorCollector
+
 
 class ProgressDisplay:
     """Base class for progress displays with common functionality."""
@@ -30,14 +32,15 @@ class ProgressDisplay:
         """
         self.console = console or Console()
         self.progress: Optional[Progress] = None
+        self.error_collector = ErrorCollector()
         self._original_log_level: Optional[int] = None
 
     def _suppress_logs(self):
-        """Temporarily suppress INFO logs during progress display."""
+        """Temporarily suppress logs during progress display."""
         logger = logging.getLogger("reggie")
         self._original_log_level = logger.level
-        # Only show WARNING and above during progress display
-        logger.setLevel(logging.WARNING)
+        # Only show CRITICAL and above during progress display (suppresses ERROR)
+        logger.setLevel(logging.CRITICAL)
 
     def _restore_logs(self):
         """Restore original logging level."""
@@ -55,6 +58,11 @@ class ProgressDisplay:
         self._restore_logs()
         if self.progress is not None:
             self.progress.stop()
+
+        # Display error summary if any errors were collected
+        if self.error_collector.has_errors():
+            summary = self.error_collector.get_summary()
+            self.console.print(f"\n{summary}\n")
 
 
 class LoadingProgressDisplay(ProgressDisplay):

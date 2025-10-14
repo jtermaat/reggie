@@ -11,7 +11,7 @@ from .categorizer import CommentCategorizer
 from .embedder import CommentEmbedder
 from ..db import get_connection, CommentRepository, CommentChunkRepository
 from ..models import CommentData
-from ..utils import CostTracker
+from ..utils import CostTracker, ErrorCollector
 from ..config import get_config
 
 logger = logging.getLogger(__name__)
@@ -25,6 +25,7 @@ class PipelineOrchestrator:
         categorization_stage: BatchCategorizationStage,
         embedding_stage: BatchEmbeddingStage,
         connection_string: str,
+        error_collector: Optional[ErrorCollector] = None,
     ):
         """Initialize the orchestrator.
 
@@ -32,22 +33,30 @@ class PipelineOrchestrator:
             categorization_stage: Stage for categorizing comments
             embedding_stage: Stage for embedding comments
             connection_string: Database connection string
+            error_collector: Optional error collector for aggregating errors
         """
         self.categorization_stage = categorization_stage
         self.embedding_stage = embedding_stage
         self.connection_string = connection_string
+        self.error_collector = error_collector
+
+        # Pass error collector to stages
+        if error_collector:
+            self.categorization_stage.set_error_collector(error_collector)
 
     @classmethod
     def create(
         cls,
         openai_api_key: Optional[str] = None,
         connection_string: Optional[str] = None,
+        error_collector: Optional[ErrorCollector] = None,
     ) -> "PipelineOrchestrator":
         """Factory method to create a PipelineOrchestrator with default stages.
 
         Args:
             openai_api_key: OpenAI API key
             connection_string: PostgreSQL connection string
+            error_collector: Optional error collector for aggregating errors
 
         Returns:
             Configured PipelineOrchestrator instance
@@ -62,7 +71,7 @@ class PipelineOrchestrator:
 
         conn_str = connection_string or get_connection_string()
 
-        return cls(categorization_stage, embedding_stage, conn_str)
+        return cls(categorization_stage, embedding_stage, conn_str, error_collector)
 
     async def process_comments(
         self,
@@ -204,7 +213,16 @@ class PipelineOrchestrator:
                     )
 
             except Exception as e:
-                logger.error(f"Error processing batch: {e}")
+                # Log at DEBUG level for file logs
+                logger.debug(f"Error processing batch: {e}")
+
+                # Collect error for summary (if collector available)
+                if self.error_collector:
+                    self.error_collector.collect(
+                        error_type="Batch Processing Error",
+                        message=str(e)
+                    )
+
                 stats["errors"] += len(batch)
 
     async def _process_single_batch(
@@ -244,7 +262,17 @@ class PipelineOrchestrator:
                 stats["chunks_created"] += len(embeddings[j]["chunks"])
 
             except Exception as e:
-                logger.error(f"Error processing comment {comment_data.id}: {e}")
+                # Log at DEBUG level for file logs
+                logger.debug(f"Error processing comment {comment_data.id}: {e}")
+
+                # Collect error for summary (if collector available)
+                if self.error_collector:
+                    self.error_collector.collect(
+                        error_type="Comment Processing Error",
+                        message=str(e),
+                        context={"comment_id": comment_data.id}
+                    )
+
                 stats["errors"] += 1
 
     async def _store_comment_results(

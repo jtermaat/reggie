@@ -114,6 +114,14 @@ class BatchCategorizationStage(PipelineStage):
         """
         self.categorizer = categorizer
 
+    def set_error_collector(self, error_collector):
+        """Set the error collector for this stage.
+
+        Args:
+            error_collector: ErrorCollector instance
+        """
+        self.categorizer.error_collector = error_collector
+
     async def process_batch(
         self, comment_data_list: List[CommentData]
     ) -> List[Dict]:

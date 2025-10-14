@@ -9,6 +9,7 @@ import psycopg
 
 from ..api import RegulationsAPIClient
 from ..db import get_connection_string, DocumentRepository, CommentRepository
+from ..utils import ErrorCollector
 
 logger = logging.getLogger(__name__)
 
@@ -20,15 +21,18 @@ class DocumentLoader:
         self,
         reg_api_key: Optional[str] = None,
         connection_string: Optional[str] = None,
+        error_collector: Optional[ErrorCollector] = None,
     ):
         """Initialize the document loader.
 
         Args:
             reg_api_key: Regulations.gov API key
             connection_string: PostgreSQL connection string
+            error_collector: Optional error collector for aggregating errors
         """
         self.api_client = RegulationsAPIClient(api_key=reg_api_key)
         self.connection_string = connection_string or get_connection_string()
+        self.error_collector = error_collector
 
 
     async def load_document(
@@ -154,7 +158,17 @@ class DocumentLoader:
                             )
 
                     except Exception as e:
-                        logger.error(f"Error storing comment: {e}")
+                        # Log at DEBUG level for file logs
+                        logger.debug(f"Error storing comment: {e}")
+
+                        # Collect error for summary (if collector available)
+                        if self.error_collector:
+                            self.error_collector.collect(
+                                error_type="Comment Loading Error",
+                                message=str(e),
+                                context={"comment_id": comment_id}
+                            )
+
                         stats["errors"] += 1
 
                 # Final commit for any remaining comments

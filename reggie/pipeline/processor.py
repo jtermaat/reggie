@@ -7,6 +7,7 @@ import logging
 from typing import Optional, Callable
 
 from .orchestrator import PipelineOrchestrator
+from ..utils import ErrorCollector
 
 logger = logging.getLogger(__name__)
 
@@ -22,16 +23,19 @@ class CommentProcessor:
         self,
         openai_api_key: Optional[str] = None,
         connection_string: Optional[str] = None,
+        error_collector: Optional[ErrorCollector] = None,
     ):
         """Initialize the comment processor.
 
         Args:
             openai_api_key: OpenAI API key
             connection_string: PostgreSQL connection string
+            error_collector: Optional error collector for aggregating errors
         """
         self.orchestrator = PipelineOrchestrator.create(
             openai_api_key=openai_api_key,
             connection_string=connection_string,
+            error_collector=error_collector,
         )
 
     async def process_comments(
