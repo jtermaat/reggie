@@ -109,10 +109,12 @@ class LoadingProgressDisplay(ProgressDisplay):
     def metadata_complete(self):
         """Mark metadata fetching as complete."""
         if self.progress and self.metadata_task_id is not None:
+            # Set total and completed to stop spinner and show as finished
             self.progress.update(
                 self.metadata_task_id,
                 description="[green]✓[/green] Metadata fetched",
-                completed=True
+                total=1,
+                completed=1
             )
 
     def init_comments(self, total: int, skipped: int = 0):
