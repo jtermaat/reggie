@@ -13,6 +13,7 @@ from rich.progress import Progress, SpinnerColumn, TextColumn
 
 from ..db import init_db
 from ..pipeline import DocumentLoader, CommentProcessor
+from ..pipeline.streamer import DocumentStreamer
 from ..config import get_config
 from ..logging_config import setup_logging
 from .cost_renderer import render_cost_report, render_session_cost_report
@@ -21,6 +22,10 @@ from .progress import (
     ProcessingProgressDisplay,
     create_loading_progress_callback,
     create_processing_progress_callback,
+)
+from .streaming_progress import (
+    StreamingProgressDisplay,
+    create_streaming_progress_callback,
 )
 
 # Load environment variables
@@ -211,6 +216,85 @@ def process(document_id: str, batch_size: int, skip_processed: bool, trace: bool
     except Exception as e:
         console.print(f"\n[red]Error:[/red] {e}")
         logging.exception("Error processing comments")
+        return
+
+
+@cli.command()
+@click.argument("document_id")
+@click.option(
+    "--trace",
+    is_flag=True,
+    help="Enable LangSmith tracing for debugging and evaluation",
+)
+def stream(document_id: str, trace: bool):
+    """Stream a document: download, process, and store in one pass.
+
+    DOCUMENT_ID: The document ID (e.g., CMS-2025-0304-0009)
+
+    This command combines loading and processing into a single streaming
+    operation. For each comment:
+    1. Download from Regulations.gov API (with rate limiting)
+    2. Immediately categorize and embed
+    3. Immediately save to database
+
+    The command displays running cost totals as it progresses, making
+    efficient use of rate limit waiting time for processing.
+
+    Example:
+        reggie stream CMS-2025-0304-0009
+    """
+    # Enable LangSmith tracing if requested
+    if trace:
+        config = get_config()
+        config.apply_langsmith(enable_tracing=True)
+        console.print("[dim]LangSmith tracing enabled[/dim]")
+
+    # Verify required environment variables
+    required_vars = ["OPENAI_API_KEY"]
+    missing = [var for var in required_vars if not os.getenv(var)]
+
+    if missing:
+        console.print(
+            f"[red]Error: Missing required environment variables: {', '.join(missing)}[/red]"
+        )
+        console.print("\nPlease set the following environment variables:")
+        for var in missing:
+            console.print(f"  - {var}")
+        return
+
+    try:
+        # Create progress display
+        display = StreamingProgressDisplay(document_id, console=console)
+
+        async def _stream():
+            streamer = DocumentStreamer.create()
+            # Create progress callback
+            callback = create_streaming_progress_callback(display)
+            stats = await streamer.stream_document(document_id, progress_callback=callback)
+            return stats
+
+        # Use context manager for log suppression and cleanup
+        with display:
+            display.start()
+            stats = asyncio.run(_stream())
+            display.stop()
+
+        console.print("\n[bold green]✓[/bold green] Document streamed successfully!\n")
+        console.print("[bold]Statistics:[/bold]")
+        console.print(f"  • Comments processed: {stats['comments_processed']}")
+        console.print(f"  • Chunks created: {stats['chunks_created']}")
+        if stats.get('skipped', 0) > 0:
+            console.print(f"  • Comments skipped: {stats['skipped']}")
+        console.print(f"  • Errors: {stats['errors']}")
+        console.print(f"  • Duration: {stats['duration']:.1f}s")
+
+        # Display cost report
+        if "cost_report" in stats:
+            render_cost_report(stats["cost_report"], console=console)
+
+    except Exception as e:
+        console.print(f"\n[red]Error:[/red] {e}")
+        logging.exception("Error streaming document")
         return
 
 
