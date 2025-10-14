@@ -3,7 +3,7 @@
 import asyncio
 import logging
 import time
-from typing import Optional, Callable
+from typing import Optional, Callable, Dict
 from datetime import datetime
 
 import psycopg
@@ -94,17 +94,277 @@ class DocumentStreamer:
             rate_limit_delay=config.reg_api_request_delay,
         )
 
+    async def _produce_comments(
+        self,
+        object_id: str,
+        document_id: str,
+        conn,
+        queue: asyncio.Queue,
+        stats: dict,
+        last_api_call_time: list,  # Using list to allow mutation in nested scope
+    ) -> None:
+        """Producer: Load comments one-by-one and push to queue.
+
+        Args:
+            object_id: Document object ID for API
+            document_id: Document ID for database
+            conn: Database connection
+            queue: Queue to push comments into
+            stats: Statistics dictionary to update
+            last_api_call_time: List containing last API call timestamp (mutable)
+        """
+        try:
+            logger.info("Producer: Starting to load comments")
+            async for comment in self.api_client.get_all_comments(object_id):
+                try:
+                    comment_id = comment.get("id")
+
+                    # Check if comment already exists
+                    if await CommentRepository.comment_exists(comment_id, conn):
+                        stats["skipped"] += 1
+                        if stats["skipped"] % 100 == 0:
+                            logger.info(f"Producer: Skipped {stats['skipped']} existing comments")
+                        continue
+
+                    # RATE LIMITING: Ensure we respect the delay between API calls
+                    if last_api_call_time[0] is not None:
+                        elapsed = time.time() - last_api_call_time[0]
+                        if elapsed < self.rate_limit_delay:
+                            wait_time = self.rate_limit_delay - elapsed
+                            logger.debug(f"Producer: Rate limiting, waiting {wait_time:.2f}s")
+                            await asyncio.sleep(wait_time)
+
+                    # Download comment details from API
+                    comment_detail = await self.api_client.get_comment_details(comment_id)
+                    last_api_call_time[0] = time.time()
+
+                    # Create CommentData object for processing
+                    attrs = comment_detail.get("attributes", {})
+                    comment_data = CommentData(
+                        id=comment_id,
+                        comment_text=attrs.get("comment", ""),
+                        first_name=attrs.get("firstName"),
+                        last_name=attrs.get("lastName"),
+                        organization=attrs.get("organization"),
+                    )
+
+                    # Push to queue (will block if queue is full - backpressure)
+                    await queue.put((comment_data, comment_detail))
+                    logger.debug(f"Producer: Queued comment {comment_id}")
+
+                except Exception as e:
+                    logger.error(f"Producer: Error loading comment {comment_id}: {e}")
+                    stats["errors"] += 1
+
+            logger.info("Producer: Finished loading all comments")
+
+        except Exception as e:
+            logger.error(f"Producer: Fatal error: {e}")
+            stats["errors"] += 1
+            raise
+        finally:
+            # Signal consumer that production is complete
+            await queue.put(None)
+            logger.info("Producer: Sent completion signal")
+
+    async def _consume_and_process_batches(
+        self,
+        document_id: str,
+        queue: asyncio.Queue,
+        conn,
+        stats: dict,
+        cost_tracker: CostTracker,
+        progress_callback: Optional[Callable] = None,
+    ) -> None:
+        """Consumer: Accumulate comments into batches and process them.
+
+        Args:
+            document_id: Document ID for database
+            queue: Queue to pull comments from
+            conn: Database connection
+            stats: Statistics dictionary to update
+            cost_tracker: Cost tracker for API usage
+            progress_callback: Optional callback for progress updates
+        """
+        config = get_config()
+        batch_size = 10
+        batch_timeout = 2.0  # seconds to wait for batch to fill
+
+        logger.info("Consumer: Starting to process batches")
+
+        current_batch = []
+        current_batch_details = []
+
+        while True:
+            try:
+                # Try to accumulate a batch of comments
+                while len(current_batch) < batch_size:
+                    try:
+                        # Wait for next item with timeout
+                        item = await asyncio.wait_for(
+                            queue.get(),
+                            timeout=batch_timeout if current_batch else None
+                        )
+
+                        # Check for completion signal
+                        if item is None:
+                            logger.info("Consumer: Received completion signal")
+                            # Process any remaining comments in batch
+                            if current_batch:
+                                await self._process_batch(
+                                    current_batch,
+                                    current_batch_details,
+                                    document_id,
+                                    conn,
+                                    stats,
+                                    cost_tracker,
+                                    progress_callback,
+                                )
+                            return
+
+                        # Add to batch
+                        comment_data, comment_detail = item
+                        current_batch.append(comment_data)
+                        current_batch_details.append(comment_detail)
+
+                    except asyncio.TimeoutError:
+                        # Timeout waiting for more comments - process partial batch
+                        if current_batch:
+                            logger.debug(f"Consumer: Timeout reached with {len(current_batch)} comments")
+                            break
+                        # If batch is empty, continue waiting
+                        continue
+
+                # Process the batch
+                if current_batch:
+                    await self._process_batch(
+                        current_batch,
+                        current_batch_details,
+                        document_id,
+                        conn,
+                        stats,
+                        cost_tracker,
+                        progress_callback,
+                    )
+
+                    # Clear batch for next iteration
+                    current_batch = []
+                    current_batch_details = []
+
+            except Exception as e:
+                logger.error(f"Consumer: Error processing batch: {e}")
+                stats["errors"] += len(current_batch)
+                # Clear batch and continue
+                current_batch = []
+                current_batch_details = []
+
+    async def _process_batch(
+        self,
+        comment_data_list: list,
+        comment_details_list: list,
+        document_id: str,
+        conn,
+        stats: dict,
+        cost_tracker: CostTracker,
+        progress_callback: Optional[Callable] = None,
+    ) -> None:
+        """Process a batch of comments.
+
+        Args:
+            comment_data_list: List of CommentData objects
+            comment_details_list: List of comment detail dicts from API
+            document_id: Document ID
+            conn: Database connection
+            stats: Statistics dictionary to update
+            cost_tracker: Cost tracker for API usage
+            progress_callback: Optional callback for progress updates
+        """
+        config = get_config()
+        batch_len = len(comment_data_list)
+
+        logger.info(f"Consumer: Processing batch of {batch_len} comments")
+
+        try:
+            # PROCESS: Categorize the batch (callback tracks this automatically)
+            async with cost_tracker.track_operation_async("categorization", config.categorization_model):
+                classifications = await self.categorization_stage.process_batch(comment_data_list)
+
+            # PROCESS: Embed the batch (callback doesn't track embeddings, so we track manually)
+            embeddings = await self.embedding_stage.process_batch(comment_data_list)
+
+            # Manually record embedding cost
+            total_embedding_tokens = sum(emb.get("tokens", 0) for emb in embeddings)
+            if total_embedding_tokens > 0:
+                cost_tracker.record_embedding_tokens(total_embedding_tokens, config.embedding_model)
+
+            # SAVE: Store all comments in batch
+            for i, comment_data in enumerate(comment_data_list):
+                try:
+                    classification = classifications[i]
+                    embedding = embeddings[i]
+
+                    # Store comment with classification
+                    await CommentRepository.store_comment(
+                        comment_details_list[i],
+                        document_id,
+                        category=classification["category"],
+                        sentiment=classification["sentiment"],
+                        topics=classification["topics"],
+                        doctor_specialization=classification.get("doctor_specialization"),
+                        licensed_professional_type=classification.get("licensed_professional_type"),
+                        conn=conn,
+                    )
+
+                    # Store comment chunks with embeddings
+                    await CommentChunkRepository.store_comment_chunks(
+                        comment_data.id,
+                        embedding["chunks"],
+                        conn,
+                    )
+
+                    # Update statistics
+                    stats["comments_processed"] += 1
+                    stats["chunks_created"] += embedding["num_chunks"]
+
+                except Exception as e:
+                    logger.error(f"Consumer: Error storing comment {comment_data.id}: {e}")
+                    stats["errors"] += 1
+
+            # Commit batch
+            await conn.commit()
+
+            logger.info(
+                f"Consumer: Completed batch - "
+                f"{stats['comments_processed']} total processed, "
+                f"{stats['chunks_created']} chunks, "
+                f"${cost_tracker.get_report().total_cost_usd:.4f} so far"
+            )
+
+            # Update progress with running cost report
+            if progress_callback:
+                progress_callback(
+                    "update",
+                    completed=stats["comments_processed"] + stats["skipped"],
+                    chunks_created=stats["chunks_created"],
+                    cost_report=cost_tracker.get_report()
+                )
+
+        except Exception as e:
+            logger.error(f"Consumer: Error in batch processing: {e}")
+            stats["errors"] += batch_len
+            raise
+
     async def stream_document(
         self,
         document_id: str,
         progress_callback: Optional[Callable] = None,
     ) -> dict:
-        """Stream a document: download, process, and store comments one-by-one.
+        """Stream a document: download and process comments in parallel batches.
 
-        This method downloads comments sequentially from the API, immediately
-        processes each comment (categorization + embedding), and saves results
-        to the database. It respects rate limiting while using waiting time
-        productively for processing.
+        This method uses a producer-consumer pattern to achieve optimal throughput:
+        - Producer: Downloads comments one-by-one (respecting rate limits)
+        - Consumer: Processes comments in batches of 10 (efficient OpenAI API calls)
+        - Both run concurrently for maximum efficiency
 
         Args:
             document_id: Document ID (e.g., "CMS-2025-0304-0009")
@@ -113,7 +373,7 @@ class DocumentStreamer:
         Returns:
             Statistics about the streaming process (includes cost_report)
         """
-        logger.info(f"Streaming document {document_id}")
+        logger.info(f"Streaming document {document_id} using producer-consumer pattern")
 
         stats = self._initialize_stats(document_id)
         cost_tracker = CostTracker()
@@ -153,113 +413,44 @@ class DocumentStreamer:
                         total=total_comments_expected
                     )
 
-                # 3. Stream comments: download → process → save
-                last_api_call_time = None
-                total_comments_processed = 0
-                total_chunks_created = 0
-                total_skipped = 0
+                # 3. Create queue for producer-consumer communication
+                # Queue size limits buffering to prevent memory issues
+                queue = asyncio.Queue(maxsize=50)
 
-                config = get_config()
+                # Track last API call time (mutable list to share between tasks)
+                last_api_call_time = [None]
 
-                async for comment in self.api_client.get_all_comments(object_id):
-                    try:
-                        comment_id = comment.get("id")
+                # 4. Run producer and consumer concurrently
+                logger.info("Starting producer and consumer tasks")
+                producer_task = asyncio.create_task(
+                    self._produce_comments(
+                        object_id,
+                        document_id,
+                        conn,
+                        queue,
+                        stats,
+                        last_api_call_time,
+                    )
+                )
 
-                        # Check if comment already exists
-                        if await CommentRepository.comment_exists(comment_id, conn):
-                            total_skipped += 1
-                            if total_skipped % 100 == 0:
-                                logger.info(f"Skipped {total_skipped} existing comments")
-                            continue
+                consumer_task = asyncio.create_task(
+                    self._consume_and_process_batches(
+                        document_id,
+                        queue,
+                        conn,
+                        stats,
+                        cost_tracker,
+                        progress_callback,
+                    )
+                )
 
-                        # RATE LIMITING: Ensure we respect the delay between API calls
-                        if last_api_call_time is not None:
-                            elapsed = time.time() - last_api_call_time
-                            if elapsed < self.rate_limit_delay:
-                                wait_time = self.rate_limit_delay - elapsed
-                                logger.debug(f"Rate limiting: waiting {wait_time:.2f}s before next API call")
-                                await asyncio.sleep(wait_time)
+                # Wait for both tasks to complete
+                await asyncio.gather(producer_task, consumer_task)
 
-                        # Download comment details from API
-                        start_time = time.time()
-                        comment_detail = await self.api_client.get_comment_details(comment_id)
-                        last_api_call_time = time.time()
+                logger.info("Producer and consumer tasks completed")
 
-                        # Create CommentData object for processing
-                        attrs = comment_detail.get("attributes", {})
-                        comment_data = CommentData(
-                            id=comment_id,
-                            comment_text=attrs.get("comment", ""),
-                            first_name=attrs.get("firstName"),
-                            last_name=attrs.get("lastName"),
-                            organization=attrs.get("organization"),
-                        )
-
-                        # PROCESS: Categorize the comment (callback tracks this automatically)
-                        async with cost_tracker.track_operation_async("categorization", config.categorization_model):
-                            _, classification_result = await self.categorization_stage.process(comment_data)
-
-                        # PROCESS: Embed the comment (callback doesn't track embeddings, so we track manually)
-                        _, embedding_result = await self.embedding_stage.process(comment_data)
-
-                        # Manually record embedding cost
-                        embedding_tokens = embedding_result.get("tokens", 0)
-                        if embedding_tokens > 0:
-                            cost_tracker.record_embedding_tokens(embedding_tokens, config.embedding_model)
-
-                        # SAVE: Store comment with classification
-                        await CommentRepository.store_comment(
-                            comment_detail,
-                            document_id,
-                            category=classification_result["category"],
-                            sentiment=classification_result["sentiment"],
-                            topics=classification_result["topics"],
-                            doctor_specialization=classification_result.get("doctor_specialization"),
-                            licensed_professional_type=classification_result.get("licensed_professional_type"),
-                            conn=conn,
-                        )
-
-                        # SAVE: Store comment chunks with embeddings
-                        await CommentChunkRepository.store_comment_chunks(
-                            comment_id,
-                            embedding_result["chunks"],
-                            conn,
-                        )
-
-                        # Commit immediately so data is visible
-                        await conn.commit()
-
-                        # Update statistics
-                        total_comments_processed += 1
-                        total_chunks_created += embedding_result["num_chunks"]
-
-                        # Update progress with running cost report
-                        if progress_callback:
-                            progress_callback(
-                                "update",
-                                completed=total_comments_processed + total_skipped,
-                                chunks_created=total_chunks_created,
-                                cost_report=cost_tracker.get_report()
-                            )
-
-                        if total_comments_processed % 10 == 0:
-                            logger.info(
-                                f"Streamed {total_comments_processed} comments "
-                                f"({total_chunks_created} chunks, "
-                                f"${cost_tracker.get_report().total_cost_usd:.4f} so far)"
-                            )
-
-                    except Exception as e:
-                        logger.error(f"Error streaming comment {comment_id}: {e}")
-                        stats["errors"] += 1
-
-                # Update final statistics
-                stats["comments_processed"] = total_comments_processed
-                stats["chunks_created"] = total_chunks_created
-                stats["skipped"] = total_skipped
-
-                if total_skipped > 0:
-                    logger.info(f"Skipped {total_skipped} comments that already existed")
+                if stats["skipped"] > 0:
+                    logger.info(f"Skipped {stats['skipped']} comments that already existed")
 
                 logger.info("All comments streamed successfully")
 
@@ -267,9 +458,9 @@ class DocumentStreamer:
                 if progress_callback:
                     progress_callback(
                         "complete",
-                        total_streamed=total_comments_processed,
-                        total_chunks=total_chunks_created,
-                        total_skipped=total_skipped
+                        total_streamed=stats["comments_processed"],
+                        total_chunks=stats["chunks_created"],
+                        total_skipped=stats["skipped"]
                     )
 
             finally:
