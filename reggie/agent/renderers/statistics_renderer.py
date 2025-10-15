@@ -237,20 +237,17 @@ def render_opposition_support_chart(data: Dict[str, Any]) -> None:
     console.print(headers)
     console.print()  # Blank line after headers
 
-    # Find maximum counts across all categories for scaling
-    max_opposition_count = 0
-    max_support_count = 0
+    # Find maximum count across all categories for scaling
+    # Use a single global maximum so opposition and support bars are directly comparable
+    max_count = 0
     for category, sentiments in sorted_categories:
         against_count = sentiments.get("against", 0)
         for_count = sentiments.get("for", 0)
-        max_opposition_count = max(max_opposition_count, against_count)
-        max_support_count = max(max_support_count, for_count)
+        max_count = max(max_count, against_count, for_count)
 
     # Ensure we have at least 1 to avoid division by zero
-    if max_opposition_count == 0:
-        max_opposition_count = 1
-    if max_support_count == 0:
-        max_support_count = 1
+    if max_count == 0:
+        max_count = 1
 
     # Calculate maximum width for count/percentage text for alignment
     max_support_text_width = 0
@@ -293,8 +290,9 @@ def render_opposition_support_chart(data: Dict[str, Any]) -> None:
         for_pct = (for_count / category_total * 100) if category_total > 0 else 0
 
         # Calculate bar widths based on absolute counts (not percentages)
-        against_bar_width = int((against_count / max_opposition_count) * max_left_bar_width)
-        for_bar_width = int((for_count / max_support_count) * max_right_bar_width)
+        # Both sides use the same max_count for direct visual comparison
+        against_bar_width = int((against_count / max_count) * max_left_bar_width)
+        for_bar_width = int((for_count / max_count) * max_right_bar_width)
 
         # Build opposition content (right-aligned, ending at center)
         opposition_text = Text()
@@ -465,20 +463,17 @@ def render_opposition_support_by_specialization(
     console.print(headers)
     console.print()  # Blank line after headers
 
-    # Find maximum counts across all specializations for scaling
-    max_opposition_count = 0
-    max_support_count = 0
+    # Find maximum count across all specializations for scaling
+    # Use a single global maximum so opposition and support bars are directly comparable
+    max_count = 0
     for specialization, sentiments in sorted_specializations:
         against_count = sentiments.get("against", 0)
         for_count = sentiments.get("for", 0)
-        max_opposition_count = max(max_opposition_count, against_count)
-        max_support_count = max(max_support_count, for_count)
+        max_count = max(max_count, against_count, for_count)
 
     # Ensure we have at least 1 to avoid division by zero
-    if max_opposition_count == 0:
-        max_opposition_count = 1
-    if max_support_count == 0:
-        max_support_count = 1
+    if max_count == 0:
+        max_count = 1
 
     # Calculate maximum width for count/percentage text for alignment
     max_support_text_width = 0
@@ -520,8 +515,9 @@ def render_opposition_support_by_specialization(
         for_pct = (for_count / specialization_total * 100) if specialization_total > 0 else 0
 
         # Calculate bar widths based on absolute counts (not percentages)
-        against_bar_width = int((against_count / max_opposition_count) * max_left_bar_width)
-        for_bar_width = int((for_count / max_support_count) * max_right_bar_width)
+        # Both sides use the same max_count for direct visual comparison
+        against_bar_width = int((against_count / max_count) * max_left_bar_width)
+        for_bar_width = int((for_count / max_count) * max_right_bar_width)
 
         # Build opposition content (right-aligned, ending at center)
         opposition_text = Text()
