@@ -14,7 +14,7 @@ This data is saved in postgresql and exposed through query tools an agent can us
 
 ### Tagging
 
-During processing, each comment is classified by a lightweight LLM (gpt-5-nano) along three dimensions:
+During processing, each comment is classified by a lightweight LLM (default: gpt-5-nano) along three dimensions:
 
 - **Category**: Who is commenting (e.g., "Physicians & Surgeons", "Patient Advocates", "Hospitals & Health Systems")
 - **Sentiment**: Position on the regulation ("for", "against", "mixed", "unclear")
@@ -139,6 +139,14 @@ This will fetch all the comments for that document.
   - "What do physicians think about this rule?"
   - "What concerns were raised about reimbursement?"
 
+  **Model Selection**: By default, the discussion agent uses `gpt-5-mini` for high-quality responses with streaming enabled. You can override this with the `--model` flag:
+
+  ```bash
+  reggie discuss CMS-2025-0304-0001 --model gpt-4o-mini
+  ```
+
+  **Streaming**: Reggie automatically attempts to stream responses for a better interactive experience. If streaming is unavailable (e.g., your organization needs verification), it will gracefully fall back to non-streaming mode.
+
   **Note**: When the agent makes statistical queries, visualizations are automatically displayed showing bar charts of the results with color-coded sentiment breakdowns.
 
 ### 8. Visualize Opposition/Support
@@ -154,16 +162,26 @@ This will fetch all the comments for that document.
   - Percentages based on total category comments (allowing users to deduce mixed/unclear sentiment)
 
 
-## Tradeoffs and Next Steps
+## Model Selection & Configuration
 
-Time was the most challenging constraint in this project, and there are plenty of things left to do.  Here are some critical areas:
+Reggie uses different models optimized for different tasks:
 
-- Right now, there is room for some enhancement to the integration between the ReAct agent and the rag graph.  This is a critical issue in the functionality of the tool that hasn't been fully resolved purely due to time constraints.  I'm happy to discuss this in more depth.
+- **Categorization/Tagging**: `gpt-5-nano` - Optimized for cost efficiency when processing thousands of comments
+- **Discussion Agent**: `gpt-5-mini` (default) - Balanced performance and quality for interactive conversations
+- **RAG Sub-Agent**: `gpt-5-mini` (default) - Ensures high-quality retrieval and evaluation
 
-- Right now, I'm using gpt-5-nano to tag the comments, but given this that this is a simple classification task, we could likely switch to a lightweight open source model.  One candidate to try is [Extract-0](https://github.com/herniqeu/extract0)
+You can customize the discussion model using the `--model` flag to experiment with different OpenAI models based on your needs and budget.
 
-- We should do more experiments to tune the parameters in config.py. Chunk_size and chunk_offset could likely benefit from smaller values, but there hasn't been time to effectively experiment with this.
+## Future Enhancements
 
-- Right now, we're stuck with a tradeoff where we can either use gpt-5-mini for the agent, or we can have streaming responses from OpenAI.  Experiments show that gpt-5-mini is superior.  We need to verify with OpenAI to enable streaming with gpt-5-mini.
+Potential areas for improvement:
 
-- Since this tool could benefit from both visualizations and links to comment pages on regulations.gov, it would be beneficial to build a web front-end rather than having it live on the command-line. 
+- **Alternative Categorization Models**: For even lower costs, consider switching to lightweight open-source models like [Extract-0](https://github.com/herniqeu/extract0) for the classification task
+- **Parameter Tuning**: Experiment with `chunk_size` and `chunk_overlap` in config.py for potentially better retrieval quality
+- **Web Interface**: A web-based UI could provide richer visualizations and direct links to comments on regulations.gov
+- **Advanced Filtering**: Add support for date ranges, keyword highlighting, and custom category definitions
+- **Export Capabilities**: Generate reports in PDF/CSV format for sharing analysis results
+
+## License
+
+MIT License - See [LICENSE](LICENSE) for details. 

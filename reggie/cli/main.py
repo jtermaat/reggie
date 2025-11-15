@@ -353,7 +353,13 @@ def list():
     is_flag=True,
     help="Enable verbose logging to see detailed debug information",
 )
-def discuss(document_id: str, trace: bool, verbose: bool):
+@click.option(
+    "--model",
+    type=str,
+    default=None,
+    help="Override the default discussion model (e.g., gpt-5-mini, gpt-4o-mini)",
+)
+def discuss(document_id: str, trace: bool, verbose: bool, model: str):
     """Start an interactive discussion session about a document.
 
     DOCUMENT_ID: The document ID to discuss (e.g., CMS-2025-0304-0009)
@@ -449,7 +455,7 @@ def discuss(document_id: str, trace: bool, verbose: bool):
             return
 
         # Initialize agent
-        agent = DiscussionAgent.create(document_id=document_id)
+        agent = DiscussionAgent.create(document_id=document_id, model=model)
 
         # Set up status callback to display status messages in gray
         set_status_callback(lambda msg: console.print(f"[dim]{msg}[/dim]"))
@@ -485,61 +491,91 @@ def discuss(document_id: str, trace: bool, verbose: bool):
                     console.print("\n[dim]Goodbye![/dim]\n")
                     break
 
-                # TEMPORARY: Using non-streaming invoke for gpt-5-mini testing
+                # Stream the response with fallback to non-streaming if needed
                 console.print()
 
-                with console.status("[bold cyan]Thinking...", spinner="dots"):
-                    response = await agent.invoke(user_input)
+                response_buffer = ""
+                response_started = False
+                live_display = None
+                status = console.status("[bold cyan]Thinking...", spinner="dots")
+                status.start()
 
-                console.print("[bold blue]Assistant:[/bold blue]")
-                console.print(Markdown(response))
-                console.print()
+                try:
+                    # Attempt streaming first
+                    try:
+                        async for token, metadata in agent.stream(user_input):
+                            # Only display content from AIMessage objects (not ToolMessage)
+                            if isinstance(token, AIMessage):
+                                # Display content tokens from AI messages only
+                                if hasattr(token, 'content') and isinstance(token.content, str) and token.content:
+                                    if not response_started:
+                                        # Stop the thinking indicator and start showing the response
+                                        status.stop()
+                                        console.print("[bold blue]Assistant:[/bold blue]")
+                                        # Initialize Live display for streaming markdown
+                                        live_display = Live(Markdown(""), console=console, refresh_per_second=10)
+                                        live_display.start()
+                                        response_started = True
 
-                # # Stream the response with thinking indicator
-                # console.print()
+                                    # Accumulate tokens and update live display
+                                    response_buffer += token.content
+                                    if live_display:
+                                        live_display.update(Markdown(response_buffer))
 
-                # response_buffer = ""
-                # response_started = False
-                # live_display = None
-                # status = console.status("[bold cyan]Thinking...", spinner="dots")
-                # status.start()
+                        # Stop live display (leaves final content visible)
+                        if live_display:
+                            live_display.stop()
 
-                # try:
-                #     async for token, metadata in agent.stream(user_input):
-                #         # Only display content from AIMessage objects (not ToolMessage)
-                #         if isinstance(token, AIMessage):
-                #             # Display content tokens from AI messages only
-                #             if hasattr(token, 'content') and isinstance(token.content, str) and token.content:
-                #                 if not response_started:
-                #                     # Stop the thinking indicator and start showing the response
-                #                     status.stop()
-                #                     console.print("[bold blue]Assistant:[/bold blue]")
-                #                     # Initialize Live display for streaming markdown
-                #                     live_display = Live(Markdown(""), console=console, refresh_per_second=10)
-                #                     live_display.start()
-                #                     response_started = True
+                        if not response_started:
+                            console.print()
 
-                #                 # Accumulate tokens and update live display
-                #                 response_buffer += token.content
-                #                 if live_display:
-                #                     live_display.update(Markdown(response_buffer))
+                    except Exception as streaming_error:
+                        # Streaming failed - fall back to non-streaming
+                        if status._live.is_started:
+                            status.stop()
+                        if live_display:
+                            try:
+                                live_display.stop()
+                            except:
+                                pass
 
-                #     # Stop live display (leaves final content visible)
-                #     if live_display:
-                #         live_display.stop()
+                        # Check if it's a verification/streaming error
+                        error_str = str(streaming_error).lower()
+                        if "stream" in error_str or "organization" in error_str or "verification" in error_str:
+                            console.print("[yellow]Note: Streaming not available (organization may need verification). Falling back to non-streaming mode...[/yellow]\n")
+                        else:
+                            # Log the error for debugging
+                            logging.debug(f"Streaming error: {streaming_error}")
+                            console.print("[yellow]Streaming unavailable, using non-streaming mode...[/yellow]\n")
 
-                # finally:
-                #     # Ensure status and live display are stopped even if there's an error
-                #     if status._live.is_started:
-                #         status.stop()
-                #     if live_display:
-                #         try:
-                #             live_display.stop()
-                #         except:
-                #             pass  # Already stopped
+                        # Retry without streaming
+                        try:
+                            with console.status("[bold cyan]Thinking...", spinner="dots"):
+                                response = await agent.invoke(user_input)
 
-                # if not response_started:
-                #     console.print()
+                            console.print("[bold blue]Assistant:[/bold blue]")
+                            console.print(Markdown(response))
+                            console.print()
+
+                        except Exception as invoke_error:
+                            # Both streaming and non-streaming failed
+                            console.print("[red]Error communicating with OpenAI:[/red]")
+                            console.print(f"[dim]The request failed with the following error:[/dim]")
+                            console.print(f"[red]{invoke_error}[/red]\n")
+                            console.print("[dim]Possible solutions:[/dim]")
+                            console.print("[dim]• Check that your OpenAI API key is valid[/dim]")
+                            console.print("[dim]• Verify the model name is correct (e.g., gpt-5-mini, gpt-4o-mini)[/dim]")
+                            console.print("[dim]• Ensure you have sufficient API credits[/dim]\n")
+
+                finally:
+                    # Ensure status and live display are stopped even if there's an error
+                    if status._live.is_started:
+                        status.stop()
+                    if live_display:
+                        try:
+                            live_display.stop()
+                        except:
+                            pass  # Already stopped
 
             except KeyboardInterrupt:
                 # Display cost report before exiting
