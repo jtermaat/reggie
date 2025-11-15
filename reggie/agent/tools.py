@@ -80,8 +80,8 @@ async def get_statistics(
             "topic_filter_mode": topic_filter_mode
         })
 
-    async with get_connection() as conn:
-        result = await CommentRepository.get_statistics(
+    with get_connection() as conn:
+        result = CommentRepository.get_statistics(
             document_id=document_id,
             group_by=group_by,
             conn=conn,

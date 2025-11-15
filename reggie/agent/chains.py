@@ -150,9 +150,9 @@ def create_vector_search_chain(
         # Generate embedding for query using LCEL chain
         embedding = await embedding_chain.ainvoke(query)
 
-        # Search using repository
-        async with get_connection() as conn:
-            results = await CommentChunkRepository.search_by_vector(
+        # Search using repository (sync database operation)
+        with get_connection() as conn:
+            results = CommentChunkRepository.search_by_vector(
                 document_id=document_id,
                 query_embedding=embedding,
                 conn=conn,

@@ -5,10 +5,8 @@ import logging
 from typing import Optional, Callable
 from datetime import datetime
 
-import psycopg
-
 from ..api import RegulationsAPIClient
-from ..db import get_connection_string, DocumentRepository, CommentRepository
+from ..db import get_connection, DocumentRepository, CommentRepository
 from ..utils import ErrorCollector
 
 logger = logging.getLogger(__name__)
@@ -20,18 +18,18 @@ class DocumentLoader:
     def __init__(
         self,
         reg_api_key: Optional[str] = None,
-        connection_string: Optional[str] = None,
+        db_path: Optional[str] = None,
         error_collector: Optional[ErrorCollector] = None,
     ):
         """Initialize the document loader.
 
         Args:
             reg_api_key: Regulations.gov API key
-            connection_string: PostgreSQL connection string
+            db_path: SQLite database path
             error_collector: Optional error collector for aggregating errors
         """
         self.api_client = RegulationsAPIClient(api_key=reg_api_key)
-        self.connection_string = connection_string or get_connection_string()
+        self.db_path = db_path
         self.error_collector = error_collector
 
 
@@ -77,12 +75,11 @@ class DocumentLoader:
             if not object_id:
                 raise ValueError(f"No objectId found for document {document_id}")
 
-            # Connect to database
-            conn = await psycopg.AsyncConnection.connect(self.connection_string)
-
-            try:
+            # Connect to database (sync connection)
+            with get_connection(self.db_path) as conn:
                 # Store document
-                await DocumentRepository.store_document(document_data, conn)
+                DocumentRepository.store_document(document_data, conn)
+                conn.commit()
                 logger.info(f"Stored document metadata for {document_id}")
 
                 # Notify progress callback that metadata is complete
@@ -112,7 +109,7 @@ class DocumentLoader:
                         comment_id = comment.get("id")
 
                         # Skip if comment already exists (check before fetching details to save API calls)
-                        if await CommentRepository.comment_exists(comment_id, conn):
+                        if CommentRepository.comment_exists(comment_id, conn):
                             skipped_comments += 1
                             if skipped_comments % 100 == 0:
                                 logger.info(f"Skipped {skipped_comments} existing comments")
@@ -130,7 +127,7 @@ class DocumentLoader:
                         comment_detail = await self.api_client.get_comment_details(comment_id)
 
                         # Store comment immediately
-                        await CommentRepository.store_comment(
+                        CommentRepository.store_comment(
                             comment_detail,
                             document_id,
                             category=None,
@@ -151,7 +148,7 @@ class DocumentLoader:
 
                         # Commit every N comments so data is visible
                         if total_comments_fetched % commit_every == 0:
-                            await conn.commit()
+                            conn.commit()
                             logger.info(
                                 f"Stored {total_comments_fetched} comments "
                                 f"(committed to database)"
@@ -173,7 +170,7 @@ class DocumentLoader:
 
                 # Final commit for any remaining comments
                 if total_comments_fetched % commit_every != 0:
-                    await conn.commit()
+                    conn.commit()
                     logger.info(
                         f"Stored {total_comments_fetched} comments total "
                         f"(all committed to database)"
@@ -194,9 +191,6 @@ class DocumentLoader:
                         total_loaded=total_comments_fetched,
                         total_skipped=skipped_comments
                     )
-
-            finally:
-                await conn.close()
 
         except Exception as e:
             logger.error(f"Error loading document: {e}")
@@ -223,9 +217,5 @@ class DocumentLoader:
         Returns:
             List of document summaries with comment counts
         """
-        conn = await psycopg.AsyncConnection.connect(self.connection_string)
-
-        try:
-            return await DocumentRepository.list_documents(conn)
-        finally:
-            await conn.close()
+        with get_connection(self.db_path) as conn:
+            return DocumentRepository.list_documents(conn)

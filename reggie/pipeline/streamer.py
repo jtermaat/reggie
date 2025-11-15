@@ -6,10 +6,8 @@ import time
 from typing import Optional, Callable, Dict
 from datetime import datetime
 
-import psycopg
-
 from ..api import RegulationsAPIClient
-from ..db import get_connection_string, DocumentRepository, CommentRepository, CommentChunkRepository
+from ..db import get_connection, get_db_path, DocumentRepository, CommentRepository, CommentChunkRepository
 from ..models import CommentData
 from ..utils import CostTracker, ErrorCollector
 from ..config import get_config
@@ -35,7 +33,7 @@ class DocumentStreamer:
         api_client: RegulationsAPIClient,
         categorization_stage: BatchCategorizationStage,
         embedding_stage: BatchEmbeddingStage,
-        connection_string: str,
+        db_path: str,
         rate_limit_delay: float = 4.0,
         error_collector: Optional[ErrorCollector] = None,
     ):
@@ -45,14 +43,14 @@ class DocumentStreamer:
             api_client: API client for fetching comments
             categorization_stage: Stage for categorizing comments
             embedding_stage: Stage for embedding comments
-            connection_string: PostgreSQL connection string
+            db_path: SQLite database path
             rate_limit_delay: Minimum seconds between API calls (default: 4.0)
             error_collector: Optional error collector for aggregating errors
         """
         self.api_client = api_client
         self.categorization_stage = categorization_stage
         self.embedding_stage = embedding_stage
-        self.connection_string = connection_string
+        self.db_path = db_path
         self.rate_limit_delay = rate_limit_delay
         self.error_collector = error_collector
 
@@ -65,7 +63,7 @@ class DocumentStreamer:
         cls,
         reg_api_key: Optional[str] = None,
         openai_api_key: Optional[str] = None,
-        connection_string: Optional[str] = None,
+        db_path: Optional[str] = None,
         error_collector: Optional[ErrorCollector] = None,
     ) -> "DocumentStreamer":
         """Factory method to create a DocumentStreamer with default configuration.
@@ -73,7 +71,7 @@ class DocumentStreamer:
         Args:
             reg_api_key: Regulations.gov API key
             openai_api_key: OpenAI API key
-            connection_string: PostgreSQL connection string
+            db_path: SQLite database path
             error_collector: Optional error collector for aggregating errors
 
         Returns:
@@ -92,14 +90,14 @@ class DocumentStreamer:
         categorization_stage = BatchCategorizationStage(categorizer)
         embedding_stage = BatchEmbeddingStage(embedder)
 
-        # Get connection string
-        conn_str = connection_string or get_connection_string()
+        # Get database path
+        db_path_to_use = db_path or get_db_path()
 
         return cls(
             api_client=api_client,
             categorization_stage=categorization_stage,
             embedding_stage=embedding_stage,
-            connection_string=conn_str,
+            db_path=db_path_to_use,
             rate_limit_delay=config.reg_api_request_delay,
             error_collector=error_collector,
         )
@@ -129,8 +127,8 @@ class DocumentStreamer:
                 try:
                     comment_id = comment.get("id")
 
-                    # Check if comment already exists
-                    if await CommentRepository.comment_exists(comment_id, conn):
+                    # Check if comment already exists (sync operation)
+                    if CommentRepository.comment_exists(comment_id, conn):
                         stats["skipped"] += 1
                         if stats["skipped"] % 100 == 0:
                             logger.info(f"Producer: Skipped {stats['skipped']} existing comments")
@@ -326,14 +324,14 @@ class DocumentStreamer:
             if total_embedding_tokens > 0:
                 cost_tracker.record_embedding_tokens(total_embedding_tokens, config.embedding_model)
 
-            # SAVE: Store all comments in batch
+            # SAVE: Store all comments in batch (sync database operations)
             for i, comment_data in enumerate(comment_data_list):
                 try:
                     classification = classifications[i]
                     embedding = embeddings[i]
 
                     # Store comment with classification
-                    await CommentRepository.store_comment(
+                    CommentRepository.store_comment(
                         comment_details_list[i],
                         document_id,
                         category=classification["category"],
@@ -345,7 +343,7 @@ class DocumentStreamer:
                     )
 
                     # Store comment chunks with embeddings
-                    await CommentChunkRepository.store_comment_chunks(
+                    CommentChunkRepository.store_comment_chunks(
                         comment_data.id,
                         embedding["chunks"],
                         conn,
@@ -369,8 +367,8 @@ class DocumentStreamer:
 
                     stats["errors"] += 1
 
-            # Commit batch
-            await conn.commit()
+            # Commit batch (sync operation)
+            conn.commit()
 
             logger.info(
                 f"Consumer: Completed batch - "
@@ -429,12 +427,11 @@ class DocumentStreamer:
             if not object_id:
                 raise ValueError(f"No objectId found for document {document_id}")
 
-            # Connect to database
-            conn = await psycopg.AsyncConnection.connect(self.connection_string)
-
-            try:
+            # Connect to database (sync connection)
+            with get_connection(self.db_path) as conn:
                 # Store document metadata
-                await DocumentRepository.store_document(document_data, conn)
+                DocumentRepository.store_document(document_data, conn)
+                conn.commit()
                 logger.info(f"Stored document metadata for {document_id}")
 
                 # Notify progress callback that metadata is complete
@@ -501,9 +498,6 @@ class DocumentStreamer:
                         total_chunks=stats["chunks_created"],
                         total_skipped=stats["skipped"]
                     )
-
-            finally:
-                await conn.close()
 
         except Exception as e:
             logger.error(f"Error streaming document: {e}")

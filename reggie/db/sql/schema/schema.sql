@@ -1,5 +1,4 @@
--- Enable pgvector extension
-CREATE EXTENSION IF NOT EXISTS vector;
+-- SQLite schema for reggie
 
 -- Documents table
 CREATE TABLE IF NOT EXISTS documents (
@@ -8,10 +7,10 @@ CREATE TABLE IF NOT EXISTS documents (
     object_id TEXT NOT NULL,
     docket_id TEXT,
     document_type TEXT,
-    posted_date TIMESTAMP,
-    metadata JSONB,
-    created_at TIMESTAMP DEFAULT NOW(),
-    updated_at TIMESTAMP DEFAULT NOW()
+    posted_date TEXT,
+    metadata TEXT,  -- JSON stored as TEXT
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT DEFAULT CURRENT_TIMESTAMP
 );
 
 CREATE INDEX IF NOT EXISTS idx_documents_docket_id ON documents(docket_id);
@@ -24,51 +23,48 @@ CREATE TABLE IF NOT EXISTS comments (
     comment_text TEXT,
     category TEXT,
     sentiment TEXT,
-    topics TEXT[],
+    topics TEXT,  -- JSON array stored as TEXT
     doctor_specialization TEXT,
     licensed_professional_type TEXT,
     first_name TEXT,
     last_name TEXT,
     organization TEXT,
-    posted_date TIMESTAMP,
-    metadata JSONB,
-    created_at TIMESTAMP DEFAULT NOW(),
-    updated_at TIMESTAMP DEFAULT NOW()
+    posted_date TEXT,
+    metadata TEXT,  -- JSON stored as TEXT
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT DEFAULT CURRENT_TIMESTAMP
 );
 
 CREATE INDEX IF NOT EXISTS idx_comments_document_id ON comments(document_id);
 CREATE INDEX IF NOT EXISTS idx_comments_category ON comments(category);
 CREATE INDEX IF NOT EXISTS idx_comments_sentiment ON comments(sentiment);
 CREATE INDEX IF NOT EXISTS idx_comments_category_sentiment ON comments(category, sentiment);
-CREATE INDEX IF NOT EXISTS idx_comments_topics ON comments USING GIN (topics);
 CREATE INDEX IF NOT EXISTS idx_comments_doctor_specialization ON comments(doctor_specialization);
 CREATE INDEX IF NOT EXISTS idx_comments_licensed_professional_type ON comments(licensed_professional_type);
 
 -- Comment chunks table for embeddings
 CREATE TABLE IF NOT EXISTS comment_chunks (
-    id SERIAL PRIMARY KEY,
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
     comment_id TEXT NOT NULL REFERENCES comments(id) ON DELETE CASCADE,
     chunk_text TEXT NOT NULL,
     chunk_index INTEGER NOT NULL,
-    embedding vector(1536),  -- dimension for text-embedding-3-small
-    created_at TIMESTAMP DEFAULT NOW()
+    embedding BLOB,  -- 1536-dimensional float32 vector stored as binary
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP
 );
 
 CREATE INDEX IF NOT EXISTS idx_comment_chunks_comment_id ON comment_chunks(comment_id);
-CREATE INDEX IF NOT EXISTS idx_comment_chunks_embedding ON comment_chunks USING ivfflat (embedding vector_cosine_ops) WITH (lists = 100);
 
--- Function to update updated_at timestamp
-CREATE OR REPLACE FUNCTION update_updated_at_column()
-RETURNS TRIGGER AS $$
+-- Triggers to update updated_at timestamp
+CREATE TRIGGER IF NOT EXISTS update_documents_updated_at
+    AFTER UPDATE ON documents
+    FOR EACH ROW
 BEGIN
-    NEW.updated_at = NOW();
-    RETURN NEW;
+    UPDATE documents SET updated_at = CURRENT_TIMESTAMP WHERE id = NEW.id;
 END;
-$$ language 'plpgsql';
 
--- Triggers for updated_at
-CREATE TRIGGER update_documents_updated_at BEFORE UPDATE ON documents
-    FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
-
-CREATE TRIGGER update_comments_updated_at BEFORE UPDATE ON comments
-    FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+CREATE TRIGGER IF NOT EXISTS update_comments_updated_at
+    AFTER UPDATE ON comments
+    FOR EACH ROW
+BEGIN
+    UPDATE comments SET updated_at = CURRENT_TIMESTAMP WHERE id = NEW.id;
+END;

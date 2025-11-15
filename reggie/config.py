@@ -10,11 +10,7 @@ class ReggieConfig(BaseSettings):
     """Unified configuration for reggie application."""
 
     # Database
-    postgres_host: str = Field(default="localhost")
-    postgres_port: int = Field(default=5432)
-    postgres_db: str = Field(default="reggie")
-    postgres_user: str = Field(default="postgres")
-    postgres_password: str = Field(default="")
+    sqlite_db_path: str = Field(default=os.path.expanduser("~/.reggie/reggie.db"))
 
     # API - Regulations.gov
     reg_api_key: str = Field(default="DEMO_KEY")
@@ -69,9 +65,9 @@ class ReggieConfig(BaseSettings):
         extra = "ignore"
 
     @property
-    def connection_string(self) -> str:
-        """Get PostgreSQL connection string."""
-        return f"postgresql://{self.postgres_user}:{self.postgres_password}@{self.postgres_host}:{self.postgres_port}/{self.postgres_db}"
+    def db_path(self) -> str:
+        """Get absolute path to SQLite database file."""
+        return os.path.abspath(os.path.expanduser(self.sqlite_db_path))
 
     def apply_langsmith(self, enable_tracing: bool = False) -> None:
         """Apply LangSmith configuration to environment if enabled.

@@ -4,7 +4,7 @@ Reggie is an end-to-end tool for loading, processing, and analyzing comments on 
 
 Data is loaded from the public API and processed by tagging with a lightweight LLM and chunking/embedding for vector search.
 
-This data is saved in postgresql and exposed through query tools an agent can use to make statistical queries or text-based RAG searches (with optional filtering on the tagged metadata).  
+This data is saved in a local SQLite database and exposed through query tools an agent can use to make statistical queries or text-based RAG searches (with optional filtering on the tagged metadata).  
 
 ## RAG Graph
 
@@ -22,7 +22,7 @@ During processing, each comment is classified by a lightweight LLM (default: gpt
 
 Detailed enums can be viewed in [comment.py](https://github.com/jtermaat/reggie/blob/main/reggie/models/comment.py).
 
-These tags are stored as structured metadata in PostgreSQL alongside the embeddings.
+These tags are stored as structured metadata in SQLite alongside the embeddings.
 
 ### Tools: Statistical Queries and Filtered RAG
 
@@ -63,20 +63,9 @@ Queries are ranked Easy, Medium, and Hard, with evaluators for completeness, acc
 ### Prerequisites
 
 - Python 3.9+
-- PostgreSQL with pgvector (or use Docker)
 - OpenAI API key
 
-### 1. Start PostgreSQL (Docker)
-
-```bash
-docker run --name reggie-postgres \
-  -e POSTGRES_PASSWORD=postgres \
-  -e POSTGRES_DB=reggie \
-  -p 5432:5432 \
-  -d pgvector/pgvector:pg16
-```
-
-### 2. Install Reggie
+### 1. Install Reggie
 
 ```bash
 # Clone or navigate to the reggie directory
@@ -90,7 +79,7 @@ source .venv/bin/activate  # On Windows: .venv\Scripts\activate
 pip install -e .
 ```
 
-### 3. Configure Environment
+### 2. Configure Environment
 
 ```bash
 # Copy example env file
@@ -101,15 +90,11 @@ cp .env.example .env
 # OPENAI_API_KEY=sk-...your-key-here...
 ```
 
-### 4. Initialize Database
+### 3. Load a Document
 
-```bash
-reggie init
-```
+The database will be automatically initialized on first use at `~/.reggie/reggie.db`.
 
-You should see: "✓ Database initialized successfully!"
-
-### 5. Load a Document
+### 4. Load a Document
 
 ```bash
 reggie load CMS-2025-0304-0001
@@ -119,7 +104,7 @@ This will fetch all the comments for that document.
 
 **Note**: This may multiple hours depending on the number of comments, due to rate limiting. For a quick test, choose a document with a low number of comments. For example, [CMS-2025-0304-0001](https://www.regulations.gov/document/CMS-2025-0304-0001) has only 10 comments.
 
-### 6. Process the Comments
+### 5. Process the Comments
 
   ```bash
   reggie process CCMS-2025-0304-0001
@@ -128,7 +113,7 @@ This will fetch all the comments for that document.
   Processes comment data for the given document, including chunking and embedding, and tagging the comments by who is commenting, the topics they commented on, and their sentiment. The enums in [comment.py](https://github.com/jtermaat/reggie/blob/main/reggie/models/comment.py) show the kinds of tags that can be used.  
   Note: Processing uses OpenAI API calls and may take time depending on the number of comments.
 
-### 7. Start a Discussion
+### 6. Start a Discussion
 
   ```bash
   reggie discuss CMS-2025-0304-0001
@@ -149,7 +134,7 @@ This will fetch all the comments for that document.
 
   **Note**: When the agent makes statistical queries, visualizations are automatically displayed showing bar charts of the results with color-coded sentiment breakdowns.
 
-### 8. Visualize Opposition/Support
+### 7. Visualize Opposition/Support
 
   ```bash
   reggie visualize CMS-2025-0304-0001

@@ -60,11 +60,8 @@ def init(force: bool):
             console.print("[red]Aborted.[/red]")
             return
 
-    async def _init():
-        await init_db()
-
     with console.status("[bold green]Initializing database..."):
-        asyncio.run(_init())
+        init_db()
 
     console.print("[bold green]✓[/bold green] Database initialized successfully!")
 

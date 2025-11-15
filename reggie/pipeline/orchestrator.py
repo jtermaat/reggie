@@ -4,12 +4,10 @@ import logging
 from typing import List, Optional, Callable
 from datetime import datetime
 
-import psycopg
-
 from .stages import BatchCategorizationStage, BatchEmbeddingStage
 from .categorizer import CommentCategorizer
 from .embedder import CommentEmbedder
-from ..db import get_connection, CommentRepository, CommentChunkRepository
+from ..db import get_connection, get_db_path, CommentRepository, CommentChunkRepository
 from ..models import CommentData
 from ..utils import CostTracker, ErrorCollector
 from ..config import get_config
@@ -24,7 +22,7 @@ class PipelineOrchestrator:
         self,
         categorization_stage: BatchCategorizationStage,
         embedding_stage: BatchEmbeddingStage,
-        connection_string: str,
+        db_path: str,
         error_collector: Optional[ErrorCollector] = None,
     ):
         """Initialize the orchestrator.
@@ -32,12 +30,12 @@ class PipelineOrchestrator:
         Args:
             categorization_stage: Stage for categorizing comments
             embedding_stage: Stage for embedding comments
-            connection_string: Database connection string
+            db_path: Database file path
             error_collector: Optional error collector for aggregating errors
         """
         self.categorization_stage = categorization_stage
         self.embedding_stage = embedding_stage
-        self.connection_string = connection_string
+        self.db_path = db_path
         self.error_collector = error_collector
 
         # Pass error collector to stages
@@ -48,30 +46,28 @@ class PipelineOrchestrator:
     def create(
         cls,
         openai_api_key: Optional[str] = None,
-        connection_string: Optional[str] = None,
+        db_path: Optional[str] = None,
         error_collector: Optional[ErrorCollector] = None,
     ) -> "PipelineOrchestrator":
         """Factory method to create a PipelineOrchestrator with default stages.
 
         Args:
             openai_api_key: OpenAI API key
-            connection_string: PostgreSQL connection string
+            db_path: SQLite database path
             error_collector: Optional error collector for aggregating errors
 
         Returns:
             Configured PipelineOrchestrator instance
         """
-        from ..db import get_connection_string
-
         categorizer = CommentCategorizer(openai_api_key=openai_api_key)
         embedder = CommentEmbedder(openai_api_key=openai_api_key)
 
         categorization_stage = BatchCategorizationStage(categorizer)
         embedding_stage = BatchEmbeddingStage(embedder)
 
-        conn_str = connection_string or get_connection_string()
+        db_path_to_use = db_path or get_db_path()
 
-        return cls(categorization_stage, embedding_stage, conn_str, error_collector)
+        return cls(categorization_stage, embedding_stage, db_path_to_use, error_collector)
 
     async def process_comments(
         self,
@@ -97,8 +93,8 @@ class PipelineOrchestrator:
         cost_tracker = CostTracker()
 
         try:
-            async with get_connection(self.connection_string) as conn:
-                rows = await self._fetch_comments(document_id, conn, skip_processed)
+            with get_connection(self.db_path) as conn:
+                rows = self._fetch_comments(document_id, conn, skip_processed)
 
                 if not rows:
                     self._log_no_comments(document_id, skip_processed)
@@ -148,7 +144,7 @@ class PipelineOrchestrator:
             "start_time": datetime.now(),
         }
 
-    async def _fetch_comments(
+    def _fetch_comments(
         self, document_id: str, conn, skip_processed: bool
     ) -> List[CommentData]:
         """Fetch comments for processing.
@@ -161,7 +157,7 @@ class PipelineOrchestrator:
         Returns:
             List of CommentData objects
         """
-        return await CommentRepository.get_comments_for_document(
+        return CommentRepository.get_comments_for_document(
             document_id, conn, skip_processed=skip_processed
         )
 
@@ -201,7 +197,7 @@ class PipelineOrchestrator:
 
             try:
                 await self._process_single_batch(batch, conn, stats, cost_tracker)
-                await conn.commit()
+                conn.commit()
                 self._log_batch_progress(i, batch_size, len(comments), stats)
 
                 # Update progress callback
@@ -255,7 +251,7 @@ class PipelineOrchestrator:
 
         for j, comment_data in enumerate(comment_data_list):
             try:
-                await self._store_comment_results(
+                self._store_comment_results(
                     comment_data, classifications[j], embeddings[j], conn
                 )
                 stats["comments_processed"] += 1
@@ -275,7 +271,7 @@ class PipelineOrchestrator:
 
                 stats["errors"] += 1
 
-    async def _store_comment_results(
+    def _store_comment_results(
         self, comment_data: CommentData, classification: dict, embedding: dict, conn
     ) -> None:
         """Store processing results for a single comment.
@@ -286,7 +282,7 @@ class PipelineOrchestrator:
             embedding: Embedding results with chunks
             conn: Database connection
         """
-        await CommentRepository.update_comment_classification(
+        CommentRepository.update_comment_classification(
             comment_data.id,
             classification["category"],
             classification["sentiment"],
@@ -296,7 +292,7 @@ class PipelineOrchestrator:
             conn,
         )
 
-        await CommentChunkRepository.store_comment_chunks(
+        CommentChunkRepository.store_comment_chunks(
             comment_data.id,
             embedding["chunks"],
             conn,
