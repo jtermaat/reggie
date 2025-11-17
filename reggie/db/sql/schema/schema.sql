@@ -1,5 +1,8 @@
 -- SQLite schema for reggie
 
+-- Enable foreign key constraints
+PRAGMA foreign_keys = ON;
+
 -- Documents table
 CREATE TABLE IF NOT EXISTS documents (
     id TEXT PRIMARY KEY,

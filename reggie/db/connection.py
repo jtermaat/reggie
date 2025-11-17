@@ -30,7 +30,17 @@ def load_sqlite_vec_extension(conn: sqlite3.Connection) -> None:
 
     Args:
         conn: SQLite connection
+
+    Raises:
+        RuntimeError: If extension loading is not supported
     """
+    if not hasattr(conn, 'enable_load_extension'):
+        raise RuntimeError(
+            "SQLite extension loading not available. "
+            "On macOS, you may need to compile Python with a custom SQLite library. "
+            "For development/testing, vector search features will not be available."
+        )
+
     conn.enable_load_extension(True)
     sqlite_vec.load(conn)
     conn.enable_load_extension(False)

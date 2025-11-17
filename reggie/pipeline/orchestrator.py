@@ -7,7 +7,8 @@ from datetime import datetime
 from .stages import BatchCategorizationStage, BatchEmbeddingStage
 from .categorizer import CommentCategorizer
 from .embedder import CommentEmbedder
-from ..db import get_connection, get_db_path, CommentRepository, CommentChunkRepository
+from ..db.connection import get_db_path
+from ..db.unit_of_work import UnitOfWork
 from ..models import CommentData
 from ..utils import CostTracker, ErrorCollector
 from ..config import get_config
@@ -93,8 +94,8 @@ class PipelineOrchestrator:
         cost_tracker = CostTracker()
 
         try:
-            with get_connection(self.db_path) as conn:
-                rows = self._fetch_comments(document_id, conn, skip_processed)
+            with UnitOfWork(self.db_path) as uow:
+                rows = self._fetch_comments(document_id, uow, skip_processed)
 
                 if not rows:
                     self._log_no_comments(document_id, skip_processed)
@@ -104,7 +105,7 @@ class PipelineOrchestrator:
 
                 logger.info(f"Found {len(rows)} comments to process")
                 await self._process_batches(
-                    rows, batch_size, conn, stats, cost_tracker, progress_callback
+                    rows, batch_size, uow, stats, cost_tracker, progress_callback
                 )
 
         except Exception as e:
@@ -145,20 +146,20 @@ class PipelineOrchestrator:
         }
 
     def _fetch_comments(
-        self, document_id: str, conn, skip_processed: bool
+        self, document_id: str, uow: UnitOfWork, skip_processed: bool
     ) -> List[CommentData]:
         """Fetch comments for processing.
 
         Args:
             document_id: Document ID
-            conn: Database connection
+            uow: Unit of Work instance
             skip_processed: If True, only fetch unprocessed comments
 
         Returns:
             List of CommentData objects
         """
-        return CommentRepository.get_comments_for_document(
-            document_id, conn, skip_processed=skip_processed
+        return uow.comments.get_comments_for_document(
+            document_id, skip_processed=skip_processed
         )
 
     def _log_no_comments(self, document_id: str, skip_processed: bool) -> None:
@@ -177,7 +178,7 @@ class PipelineOrchestrator:
         self,
         comments: List[CommentData],
         batch_size: int,
-        conn,
+        uow: UnitOfWork,
         stats: dict,
         cost_tracker: CostTracker,
         progress_callback: Optional[Callable] = None,
@@ -187,7 +188,7 @@ class PipelineOrchestrator:
         Args:
             comments: CommentData objects to process
             batch_size: Number of comments per batch
-            conn: Database connection
+            uow: Unit of Work instance
             stats: Statistics dictionary to update
             cost_tracker: CostTracker instance for tracking API costs
             progress_callback: Optional callback for progress updates
@@ -196,8 +197,8 @@ class PipelineOrchestrator:
             batch = comments[i : i + batch_size]
 
             try:
-                await self._process_single_batch(batch, conn, stats, cost_tracker)
-                conn.commit()
+                await self._process_single_batch(batch, uow, stats, cost_tracker)
+                uow.commit()
                 self._log_batch_progress(i, batch_size, len(comments), stats)
 
                 # Update progress callback
@@ -222,13 +223,13 @@ class PipelineOrchestrator:
                 stats["errors"] += len(batch)
 
     async def _process_single_batch(
-        self, comment_data_list: List[CommentData], conn, stats: dict, cost_tracker: CostTracker
+        self, comment_data_list: List[CommentData], uow: UnitOfWork, stats: dict, cost_tracker: CostTracker
     ) -> None:
         """Process a single batch of comments through the pipeline.
 
         Args:
             comment_data_list: List of CommentData to process
-            conn: Database connection
+            uow: Unit of Work instance
             stats: Statistics dictionary to update
             cost_tracker: CostTracker instance for tracking API costs
         """
@@ -252,7 +253,7 @@ class PipelineOrchestrator:
         for j, comment_data in enumerate(comment_data_list):
             try:
                 self._store_comment_results(
-                    comment_data, classifications[j], embeddings[j], conn
+                    comment_data, classifications[j], embeddings[j], uow
                 )
                 stats["comments_processed"] += 1
                 stats["chunks_created"] += len(embeddings[j]["chunks"])
@@ -272,7 +273,7 @@ class PipelineOrchestrator:
                 stats["errors"] += 1
 
     def _store_comment_results(
-        self, comment_data: CommentData, classification: dict, embedding: dict, conn
+        self, comment_data: CommentData, classification: dict, embedding: dict, uow: UnitOfWork
     ) -> None:
         """Store processing results for a single comment.
 
@@ -280,22 +281,20 @@ class PipelineOrchestrator:
             comment_data: Comment being processed
             classification: Classification results
             embedding: Embedding results with chunks
-            conn: Database connection
+            uow: Unit of Work instance
         """
-        CommentRepository.update_comment_classification(
+        uow.comments.update_comment_classification(
             comment_data.id,
             classification["category"],
             classification["sentiment"],
             classification["topics"],
             classification.get("doctor_specialization"),
             classification.get("licensed_professional_type"),
-            conn,
         )
 
-        CommentChunkRepository.store_comment_chunks(
+        uow.chunks.store_comment_chunks(
             comment_data.id,
             embedding["chunks"],
-            conn,
         )
 
     def _log_batch_progress(

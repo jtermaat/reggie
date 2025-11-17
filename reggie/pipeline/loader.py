@@ -6,7 +6,7 @@ from typing import Optional, Callable
 from datetime import datetime
 
 from ..api import RegulationsAPIClient
-from ..db import get_connection, DocumentRepository, CommentRepository
+from ..db.unit_of_work import UnitOfWork
 from ..utils import ErrorCollector
 
 logger = logging.getLogger(__name__)
@@ -76,10 +76,10 @@ class DocumentLoader:
                 raise ValueError(f"No objectId found for document {document_id}")
 
             # Connect to database (sync connection)
-            with get_connection(self.db_path) as conn:
+            with UnitOfWork(self.db_path) as uow:
                 # Store document
-                DocumentRepository.store_document(document_data, conn)
-                conn.commit()
+                uow.documents.store_document(document_data)
+                uow.commit()
                 logger.info(f"Stored document metadata for {document_id}")
 
                 # Notify progress callback that metadata is complete
@@ -109,7 +109,7 @@ class DocumentLoader:
                         comment_id = comment.get("id")
 
                         # Skip if comment already exists (check before fetching details to save API calls)
-                        if CommentRepository.comment_exists(comment_id, conn):
+                        if uow.comments.comment_exists(comment_id):
                             skipped_comments += 1
                             if skipped_comments % 100 == 0:
                                 logger.info(f"Skipped {skipped_comments} existing comments")
@@ -127,13 +127,12 @@ class DocumentLoader:
                         comment_detail = await self.api_client.get_comment_details(comment_id)
 
                         # Store comment immediately
-                        CommentRepository.store_comment(
+                        uow.comments.store_comment(
                             comment_detail,
                             document_id,
                             category=None,
                             sentiment=None,
                             topics=None,
-                            conn=conn,
                         )
                         stats["comments_processed"] += 1
                         total_comments_fetched += 1
@@ -148,7 +147,7 @@ class DocumentLoader:
 
                         # Commit every N comments so data is visible
                         if total_comments_fetched % commit_every == 0:
-                            conn.commit()
+                            uow.commit()
                             logger.info(
                                 f"Stored {total_comments_fetched} comments "
                                 f"(committed to database)"
@@ -170,7 +169,7 @@ class DocumentLoader:
 
                 # Final commit for any remaining comments
                 if total_comments_fetched % commit_every != 0:
-                    conn.commit()
+                    uow.commit()
                     logger.info(
                         f"Stored {total_comments_fetched} comments total "
                         f"(all committed to database)"
@@ -217,5 +216,5 @@ class DocumentLoader:
         Returns:
             List of document summaries with comment counts
         """
-        with get_connection(self.db_path) as conn:
-            return DocumentRepository.list_documents(conn)
+        with UnitOfWork(self.db_path) as uow:
+            return uow.documents.list_documents()

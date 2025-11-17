@@ -21,15 +21,13 @@ from dotenv import load_dotenv
 # Import database components
 import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-import psycopg
-from reggie.db.connection import get_connection_string
-from reggie.db.repository import CommentRepository
+from reggie.db import get_connection, UnitOfWork
 
 # Load environment variables from .env file
 load_dotenv()
 
 
-async def sample_comments_from_database(
+def sample_comments_from_database(
     sample_size: int = 300,
     document_id: Optional[str] = None
 ) -> List[Dict]:
@@ -42,52 +40,51 @@ async def sample_comments_from_database(
     Returns:
         List of sampled comment dicts with keys: id, comment_text, first_name, last_name, organization
     """
-    connection_string = get_connection_string()
+    with get_connection() as conn:
+        if document_id:
+            print(f"Fetching comments from database for document {document_id}...")
+            with UnitOfWork(conn) as uow:
+                comment_rows = uow.comments.get_comments_for_document(document_id)
+        else:
+            print(f"Fetching comments from database (all documents)...")
+            cur = conn.execute(
+                """
+                SELECT id, comment_text, first_name, last_name, organization
+                FROM comments
+                ORDER BY created_at
+                """
+            )
+            # Convert rows to CommentData objects
+            from reggie.models.comment import CommentData
+            comment_rows = [CommentData.from_db_row(row) for row in cur.fetchall()]
 
-    if document_id:
-        print(f"Fetching comments from database for document {document_id}...")
-        async with await psycopg.AsyncConnection.connect(connection_string) as conn:
-            comment_rows = await CommentRepository.get_comments_for_document(document_id, conn)
-    else:
-        print(f"Fetching comments from database (all documents)...")
-        async with await psycopg.AsyncConnection.connect(connection_string) as conn:
-            async with conn.cursor() as cur:
-                await cur.execute(
-                    """
-                    SELECT id, comment_text, first_name, last_name, organization
-                    FROM comments
-                    ORDER BY created_at
-                    """
-                )
-                comment_rows = await cur.fetchall()
+        print(f"Found {len(comment_rows)} total comments in database")
 
-    print(f"Found {len(comment_rows)} total comments in database")
+        if not comment_rows:
+            print("No comments found.")
+            return []
 
-    if not comment_rows:
-        print("No comments found.")
-        return []
+        # Convert CommentData objects to dict format
+        all_comments = []
+        for comment_data in comment_rows:
+            comment_dict = {
+                "id": comment_data.id,
+                "comment_text": comment_data.comment_text,
+                "first_name": comment_data.first_name,
+                "last_name": comment_data.last_name,
+                "organization": comment_data.organization
+            }
+            all_comments.append(comment_dict)
 
-    # Convert CommentData objects to dict format
-    all_comments = []
-    for comment_data in comment_rows:
-        comment_dict = {
-            "id": comment_data.id,
-            "comment_text": comment_data.comment_text,
-            "first_name": comment_data.first_name,
-            "last_name": comment_data.last_name,
-            "organization": comment_data.organization
-        }
-        all_comments.append(comment_dict)
+        # Sample randomly
+        if len(all_comments) <= sample_size:
+            sampled_comments = all_comments
+            print(f"Using all {len(sampled_comments)} comments (less than sample size)")
+        else:
+            sampled_comments = random.sample(all_comments, sample_size)
+            print(f"Randomly sampled {len(sampled_comments)} comments")
 
-    # Sample randomly
-    if len(all_comments) <= sample_size:
-        sampled_comments = all_comments
-        print(f"Using all {len(sampled_comments)} comments (less than sample size)")
-    else:
-        sampled_comments = random.sample(all_comments, sample_size)
-        print(f"Randomly sampled {len(sampled_comments)} comments")
-
-    return sampled_comments
+        return sampled_comments
 
 
 class TopicIssueExtractor:
@@ -223,7 +220,7 @@ async def async_main():
         print(f"Sampling {args.sample_size} comments from all documents")
     print(f"{'='*60}\n")
 
-    comments = await sample_comments_from_database(args.sample_size, args.document_id)
+    comments = sample_comments_from_database(args.sample_size, args.document_id)
 
     if not comments:
         print("No comments sampled. Exiting.")

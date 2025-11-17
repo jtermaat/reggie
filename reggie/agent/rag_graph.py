@@ -15,8 +15,7 @@ from ..models.agent import (
     HasEnoughInformation
 )
 from ..config import get_config
-from ..db.connection import get_connection
-from ..db.repository import CommentRepository
+from ..db.unit_of_work import UnitOfWork
 from ..exceptions import RAGSearchError
 from .chains import (
     create_vector_search_chain,
@@ -228,10 +227,10 @@ def create_rag_graph() -> StateGraph:
 
         snippets = []
 
-        async with get_connection() as conn:
+        with UnitOfWork() as uow:
             for comment_id in relevant_ids:
                 # Get full comment text using repository
-                full_text = await CommentRepository.get_full_text(comment_id, conn)
+                full_text = uow.comments.get_full_text(comment_id)
 
                 if not full_text:
                     logger.warning(f"No text found for comment {comment_id}")

@@ -6,8 +6,7 @@ from typing import Optional
 from langchain_core.tools import StructuredTool
 from langsmith.run_helpers import get_current_run_tree
 
-from ..db.connection import get_connection
-from ..db.repository import CommentRepository
+from ..db.unit_of_work import UnitOfWork
 from ..exceptions import RAGSearchError
 from ..prompts import prompts
 from ..models.agent import GetStatisticsInput
@@ -80,11 +79,10 @@ async def get_statistics(
             "topic_filter_mode": topic_filter_mode
         })
 
-    with get_connection() as conn:
-        result = CommentRepository.get_statistics(
+    with UnitOfWork() as uow:
+        result = uow.comment_statistics.get_statistics(
             document_id=document_id,
             group_by=group_by,
-            conn=conn,
             sentiment_filter=sentiment_filter,
             category_filter=category_filter,
             topics_filter=topics_filter,

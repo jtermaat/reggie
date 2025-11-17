@@ -4,14 +4,13 @@ This script analyzes the quality of doctor_specialization and licensed_professio
 classifications to ensure they are being applied correctly and with good coverage.
 """
 
-import asyncio
 import sys
 from pathlib import Path
 
 # Add parent directory to path to import reggie modules
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from reggie.db.connection import get_connection
+from reggie.db import get_connection
 from rich.console import Console
 from rich.table import Table
 from rich.panel import Panel
@@ -19,7 +18,7 @@ from rich.panel import Panel
 console = Console()
 
 
-async def validate_subcategories(document_id: str):
+def validate_subcategories(document_id: str):
     """Validate sub-category classifications for a document.
 
     Args:
@@ -27,97 +26,96 @@ async def validate_subcategories(document_id: str):
     """
     console.print(f"\n[bold]Validating sub-categories for document:[/bold] {document_id}\n")
 
-    async with get_connection() as conn:
-        async with conn.cursor() as cur:
-            # 1. Check for orphaned doctor_specializations
-            await cur.execute("""
-                SELECT COUNT(*)
-                FROM comments
-                WHERE document_id = %s
-                AND doctor_specialization IS NOT NULL
-                AND category != 'Physicians & Surgeons'
-            """, (document_id,))
-            orphaned_specializations = (await cur.fetchone())[0]
+    with get_connection() as conn:
+        # 1. Check for orphaned doctor_specializations
+        cur = conn.execute("""
+            SELECT COUNT(*)
+            FROM comments
+            WHERE document_id = ?
+            AND doctor_specialization IS NOT NULL
+            AND category != 'Physicians & Surgeons'
+        """, (document_id,))
+        orphaned_specializations = cur.fetchone()[0]
 
-            # 2. Check for orphaned licensed_professional_types
-            await cur.execute("""
-                SELECT COUNT(*)
-                FROM comments
-                WHERE document_id = %s
-                AND licensed_professional_type IS NOT NULL
-                AND category != 'Other Licensed Clinicians'
-            """, (document_id,))
-            orphaned_prof_types = (await cur.fetchone())[0]
+        # 2. Check for orphaned licensed_professional_types
+        cur = conn.execute("""
+            SELECT COUNT(*)
+            FROM comments
+            WHERE document_id = ?
+            AND licensed_professional_type IS NOT NULL
+            AND category != 'Other Licensed Clinicians'
+        """, (document_id,))
+        orphaned_prof_types = cur.fetchone()[0]
 
-            # 3. Get physician coverage statistics
-            await cur.execute("""
-                SELECT
-                    COUNT(*) as total_physicians,
-                    COUNT(doctor_specialization) as with_specialization,
-                    COUNT(CASE WHEN doctor_specialization IS NULL THEN 1 END) as without_specialization,
-                    ROUND(100.0 * COUNT(doctor_specialization) / NULLIF(COUNT(*), 0), 1) as coverage_pct
-                FROM comments
-                WHERE document_id = %s
-                AND category = 'Physicians & Surgeons'
-            """, (document_id,))
-            physician_stats = await cur.fetchone()
+        # 3. Get physician coverage statistics
+        cur = conn.execute("""
+            SELECT
+                COUNT(*) as total_physicians,
+                COUNT(doctor_specialization) as with_specialization,
+                COUNT(CASE WHEN doctor_specialization IS NULL THEN 1 END) as without_specialization,
+                ROUND(100.0 * COUNT(doctor_specialization) / NULLIF(COUNT(*), 0), 1) as coverage_pct
+            FROM comments
+            WHERE document_id = ?
+            AND category = 'Physicians & Surgeons'
+        """, (document_id,))
+        physician_stats = cur.fetchone()
 
-            # 4. Get licensed professional coverage statistics
-            await cur.execute("""
-                SELECT
-                    COUNT(*) as total_professionals,
-                    COUNT(licensed_professional_type) as with_type,
-                    COUNT(CASE WHEN licensed_professional_type IS NULL THEN 1 END) as without_type,
-                    ROUND(100.0 * COUNT(licensed_professional_type) / NULLIF(COUNT(*), 0), 1) as coverage_pct
-                FROM comments
-                WHERE document_id = %s
-                AND category = 'Other Licensed Clinicians'
-            """, (document_id,))
-            professional_stats = await cur.fetchone()
+        # 4. Get licensed professional coverage statistics
+        cur = conn.execute("""
+            SELECT
+                COUNT(*) as total_professionals,
+                COUNT(licensed_professional_type) as with_type,
+                COUNT(CASE WHEN licensed_professional_type IS NULL THEN 1 END) as without_type,
+                ROUND(100.0 * COUNT(licensed_professional_type) / NULLIF(COUNT(*), 0), 1) as coverage_pct
+            FROM comments
+            WHERE document_id = ?
+            AND category = 'Other Licensed Clinicians'
+        """, (document_id,))
+        professional_stats = cur.fetchone()
 
-            # 5. Get top doctor specializations
-            await cur.execute("""
-                SELECT
-                    doctor_specialization,
-                    COUNT(*) as count,
-                    ROUND(100.0 * COUNT(*) / (
-                        SELECT COUNT(*)
-                        FROM comments
-                        WHERE document_id = %s
-                        AND category = 'Physicians & Surgeons'
-                        AND doctor_specialization IS NOT NULL
-                    ), 1) as percentage
-                FROM comments
-                WHERE document_id = %s
-                AND category = 'Physicians & Surgeons'
-                AND doctor_specialization IS NOT NULL
-                GROUP BY doctor_specialization
-                ORDER BY count DESC
-                LIMIT 15
-            """, (document_id, document_id))
-            top_specializations = await cur.fetchall()
+        # 5. Get top doctor specializations
+        cur = conn.execute("""
+            SELECT
+                doctor_specialization,
+                COUNT(*) as count,
+                ROUND(100.0 * COUNT(*) / (
+                    SELECT COUNT(*)
+                    FROM comments
+                    WHERE document_id = ?
+                    AND category = 'Physicians & Surgeons'
+                    AND doctor_specialization IS NOT NULL
+                ), 1) as percentage
+            FROM comments
+            WHERE document_id = ?
+            AND category = 'Physicians & Surgeons'
+            AND doctor_specialization IS NOT NULL
+            GROUP BY doctor_specialization
+            ORDER BY count DESC
+            LIMIT 15
+        """, (document_id, document_id))
+        top_specializations = cur.fetchall()
 
-            # 6. Get top licensed professional types
-            await cur.execute("""
-                SELECT
-                    licensed_professional_type,
-                    COUNT(*) as count,
-                    ROUND(100.0 * COUNT(*) / (
-                        SELECT COUNT(*)
-                        FROM comments
-                        WHERE document_id = %s
-                        AND category = 'Other Licensed Clinicians'
-                        AND licensed_professional_type IS NOT NULL
-                    ), 1) as percentage
-                FROM comments
-                WHERE document_id = %s
-                AND category = 'Other Licensed Clinicians'
-                AND licensed_professional_type IS NOT NULL
-                GROUP BY licensed_professional_type
-                ORDER BY count DESC
-                LIMIT 15
-            """, (document_id, document_id))
-            top_prof_types = await cur.fetchall()
+        # 6. Get top licensed professional types
+        cur = conn.execute("""
+            SELECT
+                licensed_professional_type,
+                COUNT(*) as count,
+                ROUND(100.0 * COUNT(*) / (
+                    SELECT COUNT(*)
+                    FROM comments
+                    WHERE document_id = ?
+                    AND category = 'Other Licensed Clinicians'
+                    AND licensed_professional_type IS NOT NULL
+                ), 1) as percentage
+            FROM comments
+            WHERE document_id = ?
+            AND category = 'Other Licensed Clinicians'
+            AND licensed_professional_type IS NOT NULL
+            GROUP BY licensed_professional_type
+            ORDER BY count DESC
+            LIMIT 15
+        """, (document_id, document_id))
+        top_prof_types = cur.fetchall()
 
     # Display validation results
 
@@ -188,51 +186,50 @@ async def validate_subcategories(document_id: str):
     # 4. Sample unspecified physicians/professionals for manual review
     console.print("[bold]Sample Comments for Manual Review:[/bold]\n")
 
-    async with get_connection() as conn:
-        async with conn.cursor() as cur:
-            # Sample unspecified physicians
-            await cur.execute("""
-                SELECT id, first_name, last_name, organization,
-                       LEFT(comment_text, 200) as preview
-                FROM comments
-                WHERE document_id = %s
-                AND category = 'Physicians & Surgeons'
-                AND doctor_specialization IS NULL
-                ORDER BY RANDOM()
-                LIMIT 5
-            """, (document_id,))
-            unspecified_physicians = await cur.fetchall()
+    with get_connection() as conn:
+        # Sample unspecified physicians
+        cur = conn.execute("""
+            SELECT id, first_name, last_name, organization,
+                   SUBSTR(comment_text, 1, 200) as preview
+            FROM comments
+            WHERE document_id = ?
+            AND category = 'Physicians & Surgeons'
+            AND doctor_specialization IS NULL
+            ORDER BY RANDOM()
+            LIMIT 5
+        """, (document_id,))
+        unspecified_physicians = cur.fetchall()
 
-            if unspecified_physicians:
-                console.print("[cyan]Physicians without specialization:[/cyan]")
-                for comment_id, first, last, org, preview in unspecified_physicians:
-                    name = f"{first or ''} {last or ''}".strip() or "N/A"
-                    console.print(f"  • ID: {comment_id}")
-                    console.print(f"    Name: {name} | Org: {org or 'N/A'}")
-                    console.print(f"    Preview: {preview}...")
-                    console.print()
+        if unspecified_physicians:
+            console.print("[cyan]Physicians without specialization:[/cyan]")
+            for comment_id, first, last, org, preview in unspecified_physicians:
+                name = f"{first or ''} {last or ''}".strip() or "N/A"
+                console.print(f"  • ID: {comment_id}")
+                console.print(f"    Name: {name} | Org: {org or 'N/A'}")
+                console.print(f"    Preview: {preview}...")
+                console.print()
 
-            # Sample unspecified professionals
-            await cur.execute("""
-                SELECT id, first_name, last_name, organization,
-                       LEFT(comment_text, 200) as preview
-                FROM comments
-                WHERE document_id = %s
-                AND category = 'Other Licensed Clinicians'
-                AND licensed_professional_type IS NULL
-                ORDER BY RANDOM()
-                LIMIT 5
-            """, (document_id,))
-            unspecified_professionals = await cur.fetchall()
+        # Sample unspecified professionals
+        cur = conn.execute("""
+            SELECT id, first_name, last_name, organization,
+                   SUBSTR(comment_text, 1, 200) as preview
+            FROM comments
+            WHERE document_id = ?
+            AND category = 'Other Licensed Clinicians'
+            AND licensed_professional_type IS NULL
+            ORDER BY RANDOM()
+            LIMIT 5
+        """, (document_id,))
+        unspecified_professionals = cur.fetchall()
 
-            if unspecified_professionals:
-                console.print("[cyan]Licensed professionals without type:[/cyan]")
-                for comment_id, first, last, org, preview in unspecified_professionals:
-                    name = f"{first or ''} {last or ''}".strip() or "N/A"
-                    console.print(f"  • ID: {comment_id}")
-                    console.print(f"    Name: {name} | Org: {org or 'N/A'}")
-                    console.print(f"    Preview: {preview}...")
-                    console.print()
+        if unspecified_professionals:
+            console.print("[cyan]Licensed professionals without type:[/cyan]")
+            for comment_id, first, last, org, preview in unspecified_professionals:
+                name = f"{first or ''} {last or ''}".strip() or "N/A"
+                console.print(f"  • ID: {comment_id}")
+                console.print(f"    Name: {name} | Org: {org or 'N/A'}")
+                console.print(f"    Preview: {preview}...")
+                console.print()
 
 
 if __name__ == "__main__":
@@ -243,4 +240,4 @@ if __name__ == "__main__":
         sys.exit(1)
 
     document_id = sys.argv[1]
-    asyncio.run(validate_subcategories(document_id))
+    validate_subcategories(document_id)

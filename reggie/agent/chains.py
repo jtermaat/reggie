@@ -6,8 +6,7 @@ from typing import List, Dict, Any
 from langchain_core.runnables import Runnable, RunnableLambda
 from langchain_openai import OpenAIEmbeddings, ChatOpenAI
 
-from ..db.connection import get_connection
-from ..db.repository import CommentChunkRepository, CommentRepository
+from ..db.unit_of_work import UnitOfWork
 from ..models.agent import (
     CommentChunkSearchResult,
     QueryGeneration,
@@ -151,11 +150,10 @@ def create_vector_search_chain(
         embedding = await embedding_chain.ainvoke(query)
 
         # Search using repository (sync database operation)
-        with get_connection() as conn:
-            results = CommentChunkRepository.search_by_vector(
+        with UnitOfWork() as uow:
+            results = uow.chunks.search_by_vector(
                 document_id=document_id,
                 query_embedding=embedding,
-                conn=conn,
                 limit=limit,
                 sentiment_filter=sentiment_filter,
                 category_filter=category_filter,

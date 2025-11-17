@@ -1,13 +1,12 @@
 """Shared pytest fixtures for all tests"""
 
 import os
-import asyncio
-from typing import AsyncGenerator, Dict, Any
-from datetime import datetime
+import sqlite3
+import tempfile
+from typing import Generator, Dict, Any
+from pathlib import Path
 
 import pytest
-import psycopg
-from psycopg import AsyncConnection
 
 
 @pytest.fixture(scope="session", autouse=True)
@@ -18,7 +17,6 @@ def setup_test_env():
 
     # Set test environment variables
     os.environ["OPENAI_API_KEY"] = "sk-test-fake-key-for-testing"
-    os.environ["POSTGRES_DB"] = "reggie_test"
 
     yield
 
@@ -27,47 +25,44 @@ def setup_test_env():
     os.environ.update(original_env)
 
 
-@pytest.fixture(scope="session")
-def event_loop():
-    """Create an instance of the default event loop for the test session."""
-    loop = asyncio.get_event_loop_policy().new_event_loop()
-    yield loop
-    loop.close()
-
-
 @pytest.fixture
-async def test_db() -> AsyncGenerator[AsyncConnection, None]:
+def test_db() -> Generator[sqlite3.Connection, None, None]:
     """Provides a clean test database for each test.
 
-    Creates a test database, initializes schema, yields connection,
-    then drops all tables after the test.
+    Creates a temporary SQLite database, initializes schema, yields connection,
+    then deletes the database after the test.
     """
-    from reggie.config import get_config
-    from reggie.db import init_db
+    from reggie.db.connection import _init_db_schema, load_sqlite_vec_extension
 
-    # Use test database
-    config = get_config()
-    conn_string = config.connection_string
-
-    # Initialize database schema
-    await init_db(conn_string)
-
-    # Create connection for test
-    conn = await psycopg.AsyncConnection.connect(conn_string)
+    # Create temporary database file
+    temp_db = tempfile.NamedTemporaryFile(delete=False, suffix='.db')
+    temp_db.close()
+    db_path = temp_db.name
 
     try:
+        # Create connection
+        conn = sqlite3.connect(db_path)
+        conn.row_factory = sqlite3.Row
+
+        # Try to load sqlite-vec extension (may not be available on all platforms)
+        try:
+            load_sqlite_vec_extension(conn)
+        except RuntimeError as e:
+            # Extension loading not supported on this platform
+            # Tests that don't use vector search will still work
+            import warnings
+            warnings.warn(f"sqlite-vec extension not loaded: {e}", UserWarning)
+
+        # Initialize schema
+        _init_db_schema(conn)
+
         yield conn
     finally:
-        # Clean up: Drop all tables
-        async with conn.cursor() as cur:
-            await cur.execute("""
-                DROP TABLE IF EXISTS comment_chunks CASCADE;
-                DROP TABLE IF EXISTS comments CASCADE;
-                DROP TABLE IF EXISTS documents CASCADE;
-                DROP FUNCTION IF EXISTS update_updated_at_column CASCADE;
-            """)
-        await conn.commit()
-        await conn.close()
+        # Clean up
+        conn.close()
+        # Delete temporary database file
+        if os.path.exists(db_path):
+            os.unlink(db_path)
 
 
 @pytest.fixture
@@ -173,16 +168,43 @@ def mock_openai(mocker):
 
     mock_chat = mocker.patch("langchain_openai.ChatOpenAI")
     mock_chat_instance = mock_chat.return_value
-    mock_chat_instance.with_structured_output.return_value.ainvoke = mocker.AsyncMock(
-        return_value=mock_classification
-    )
+
+    # Create mock that works with both sync and async
+    if hasattr(mocker, 'AsyncMock'):
+        mock_chat_instance.with_structured_output.return_value.ainvoke = mocker.AsyncMock(
+            return_value=mock_classification
+        )
+        mock_chat_instance.with_structured_output.return_value.invoke = mocker.Mock(
+            return_value=mock_classification
+        )
+    else:
+        # Fallback for older pytest-mock versions
+        mock_chat_instance.with_structured_output.return_value.ainvoke = mocker.Mock(
+            return_value=mock_classification
+        )
+        mock_chat_instance.with_structured_output.return_value.invoke = mocker.Mock(
+            return_value=mock_classification
+        )
 
     # Mock OpenAIEmbeddings for embeddings
     mock_embeddings = mocker.patch("langchain_openai.OpenAIEmbeddings")
     mock_embeddings_instance = mock_embeddings.return_value
-    mock_embeddings_instance.aembed_documents = mocker.AsyncMock(
-        return_value=[[0.1] * 1536]  # Mock embedding vector
-    )
+
+    # Support both sync and async embeddings
+    if hasattr(mocker, 'AsyncMock'):
+        mock_embeddings_instance.aembed_documents = mocker.AsyncMock(
+            return_value=[[0.1] * 1536]  # Mock embedding vector
+        )
+        mock_embeddings_instance.embed_documents = mocker.Mock(
+            return_value=[[0.1] * 1536]
+        )
+    else:
+        mock_embeddings_instance.aembed_documents = mocker.Mock(
+            return_value=[[0.1] * 1536]
+        )
+        mock_embeddings_instance.embed_documents = mocker.Mock(
+            return_value=[[0.1] * 1536]
+        )
 
     return {
         "chat": mock_chat_instance,

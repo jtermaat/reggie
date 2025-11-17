@@ -159,16 +159,15 @@ def process(document_id: str, batch_size: int, skip_processed: bool, trace: bool
 
     try:
         # Get comment count first to initialize progress display
-        async def _get_count():
-            from ..db.connection import get_connection
-            from ..db.repository import CommentRepository
+        def _get_count():
+            from ..db.unit_of_work import UnitOfWork
 
-            async with get_connection() as conn:
-                return await CommentRepository.count_comments_for_document(
-                    document_id, conn, skip_processed=skip_processed
+            with UnitOfWork() as uow:
+                return uow.comment_statistics.count_comments_for_document(
+                    document_id, skip_processed=skip_processed
                 )
 
-        total_comments = asyncio.run(_get_count())
+        total_comments = _get_count()
 
         if total_comments == 0:
             if skip_processed:
@@ -402,43 +401,42 @@ def discuss(document_id: str, trace: bool, verbose: bool, model: str):
             console.print(f"  - {var}")
         return
 
-    async def _verify_document():
+    def _verify_document():
         """Verify the document exists and has processed comments."""
-        from ..db.connection import get_connection
+        from ..db import get_connection
 
-        async with get_connection() as conn:
-            async with conn.cursor() as cur:
-                # Check document exists
-                await cur.execute(
-                    "SELECT title FROM documents WHERE id = %s",
-                    (document_id,)
-                )
-                doc = await cur.fetchone()
+        with get_connection() as conn:
+            # Check document exists
+            cur = conn.execute(
+                "SELECT title FROM documents WHERE id = ?",
+                (document_id,)
+            )
+            doc = cur.fetchone()
 
-                if not doc:
-                    return None, "Document not found"
+            if not doc:
+                return None, "Document not found"
 
-                # Check for processed comments (with embeddings)
-                await cur.execute(
-                    """
-                    SELECT COUNT(DISTINCT c.id)
-                    FROM comments c
-                    JOIN comment_chunks cc ON c.id = cc.comment_id
-                    WHERE c.document_id = %s
-                    """,
-                    (document_id,)
-                )
-                count = (await cur.fetchone())[0]
+            # Check for processed comments (with embeddings)
+            cur = conn.execute(
+                """
+                SELECT COUNT(DISTINCT c.id)
+                FROM comments c
+                JOIN comment_chunks cc ON c.id = cc.comment_id
+                WHERE c.document_id = ?
+                """,
+                (document_id,)
+            )
+            count = cur.fetchone()[0]
 
-                if count == 0:
-                    return doc[0], "no_comments"
+            if count == 0:
+                return doc[0], "no_comments"
 
-                return doc[0], count
+            return doc[0], count
 
     async def _run_discussion():
         """Run the interactive discussion."""
         # Verify document
-        doc_title, status = await _verify_document()
+        doc_title, status = _verify_document()
 
         if doc_title is None:
             console.print(f"\n[red]Error: Document '{document_id}' not found.[/red]")
@@ -608,49 +606,46 @@ def visualize(document_id: str):
     Example:
         reggie visualize CMS-2025-0304-0009
     """
-    from ..db.connection import get_connection
-    from ..db.repository import CommentRepository
+    from ..db.unit_of_work import UnitOfWork
     from ..agent.renderers import render_opposition_support_chart, render_opposition_support_by_specialization
 
-    async def _visualize():
+    def _visualize():
         """Generate and display the visualization."""
-        async with get_connection() as conn:
+        with UnitOfWork() as uow:
             # Verify document exists
-            async with conn.cursor() as cur:
-                await cur.execute(
-                    "SELECT title FROM documents WHERE id = %s",
-                    (document_id,)
-                )
-                doc = await cur.fetchone()
+            cur = uow._conn.execute(
+                "SELECT title FROM documents WHERE id = ?",
+                (document_id,)
+            )
+            doc = cur.fetchone()
 
-                if not doc:
-                    console.print(f"\n[red]Error: Document '{document_id}' not found.[/red]")
-                    console.print("\nUse 'reggie list' to see available documents.")
-                    console.print("Use 'reggie load <document_id>' to load a new document.\n")
-                    return
+            if not doc:
+                console.print(f"\n[red]Error: Document '{document_id}' not found.[/red]")
+                console.print("\nUse 'reggie list' to see available documents.")
+                console.print("Use 'reggie load <document_id>' to load a new document.\n")
+                return
 
-                doc_title = doc[0]
+            doc_title = doc[0]
 
-                # Check for processed comments
-                await cur.execute(
-                    """
-                    SELECT COUNT(DISTINCT c.id)
-                    FROM comments c
-                    WHERE c.document_id = %s
-                    """,
-                    (document_id,)
-                )
-                count = (await cur.fetchone())[0]
+            # Check for processed comments
+            cur = uow._conn.execute(
+                """
+                SELECT COUNT(DISTINCT c.id)
+                FROM comments c
+                WHERE c.document_id = ?
+                """,
+                (document_id,)
+            )
+            count = cur.fetchone()[0]
 
-                if count == 0:
-                    console.print(f"\n[yellow]Warning: Document '{document_id}' has no comments.[/yellow]")
-                    console.print("\nUse 'reggie load <document_id>' to load comments first.\n")
-                    return
+            if count == 0:
+                console.print(f"\n[yellow]Warning: Document '{document_id}' has no comments.[/yellow]")
+                console.print("\nUse 'reggie load <document_id>' to load comments first.\n")
+                return
 
             # Get sentiment by category data
-            breakdown = await CommentRepository.get_sentiment_by_category(
-                document_id=document_id,
-                conn=conn
+            breakdown = uow.comment_analytics.get_sentiment_by_category(
+                document_id=document_id
             )
 
             if not breakdown:
@@ -675,11 +670,10 @@ def visualize(document_id: str):
             # SECTION 2: Render physician specializations breakdown
             physician_category = "Physicians & Surgeons"
             if physician_category in breakdown:
-                physician_breakdown = await CommentRepository.get_sentiment_by_specialization(
+                physician_breakdown = uow.comment_analytics.get_sentiment_by_specialization(
                     document_id=document_id,
                     field_name="doctor_specialization",
-                    category_filter=physician_category,
-                    conn=conn
+                    category_filter=physician_category
                 )
 
                 if physician_breakdown:
@@ -695,11 +689,10 @@ def visualize(document_id: str):
             # SECTION 3: Render licensed professional types breakdown
             licensed_professional_category = "Other Licensed Clinicians"
             if licensed_professional_category in breakdown:
-                licensed_professional_breakdown = await CommentRepository.get_sentiment_by_specialization(
+                licensed_professional_breakdown = uow.comment_analytics.get_sentiment_by_specialization(
                     document_id=document_id,
                     field_name="licensed_professional_type",
-                    category_filter=licensed_professional_category,
-                    conn=conn
+                    category_filter=licensed_professional_category
                 )
 
                 if licensed_professional_breakdown:
@@ -713,7 +706,7 @@ def visualize(document_id: str):
                     )
 
     try:
-        asyncio.run(_visualize())
+        _visualize()
     except Exception as e:
         console.print(f"\n[red]Error:[/red] {e}")
         logging.exception("Error generating visualization")

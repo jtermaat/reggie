@@ -7,7 +7,8 @@ from typing import Optional, Callable, Dict
 from datetime import datetime
 
 from ..api import RegulationsAPIClient
-from ..db import get_connection, get_db_path, DocumentRepository, CommentRepository, CommentChunkRepository
+from ..db.connection import get_db_path
+from ..db.unit_of_work import UnitOfWork
 from ..models import CommentData
 from ..utils import CostTracker, ErrorCollector
 from ..config import get_config
@@ -106,7 +107,7 @@ class DocumentStreamer:
         self,
         object_id: str,
         document_id: str,
-        conn,
+        uow: UnitOfWork,
         queue: asyncio.Queue,
         stats: dict,
         last_api_call_time: list,  # Using list to allow mutation in nested scope
@@ -116,7 +117,7 @@ class DocumentStreamer:
         Args:
             object_id: Document object ID for API
             document_id: Document ID for database
-            conn: Database connection
+            uow: Unit of Work instance
             queue: Queue to push comments into
             stats: Statistics dictionary to update
             last_api_call_time: List containing last API call timestamp (mutable)
@@ -128,7 +129,7 @@ class DocumentStreamer:
                     comment_id = comment.get("id")
 
                     # Check if comment already exists (sync operation)
-                    if CommentRepository.comment_exists(comment_id, conn):
+                    if uow.comments.comment_exists(comment_id):
                         stats["skipped"] += 1
                         if stats["skipped"] % 100 == 0:
                             logger.info(f"Producer: Skipped {stats['skipped']} existing comments")
@@ -189,7 +190,7 @@ class DocumentStreamer:
         self,
         document_id: str,
         queue: asyncio.Queue,
-        conn,
+        uow: UnitOfWork,
         stats: dict,
         cost_tracker: CostTracker,
         progress_callback: Optional[Callable] = None,
@@ -199,7 +200,7 @@ class DocumentStreamer:
         Args:
             document_id: Document ID for database
             queue: Queue to pull comments from
-            conn: Database connection
+            uow: Unit of Work instance
             stats: Statistics dictionary to update
             cost_tracker: Cost tracker for API usage
             progress_callback: Optional callback for progress updates
@@ -233,7 +234,7 @@ class DocumentStreamer:
                                     current_batch,
                                     current_batch_details,
                                     document_id,
-                                    conn,
+                                    uow,
                                     stats,
                                     cost_tracker,
                                     progress_callback,
@@ -259,7 +260,7 @@ class DocumentStreamer:
                         current_batch,
                         current_batch_details,
                         document_id,
-                        conn,
+                        uow,
                         stats,
                         cost_tracker,
                         progress_callback,
@@ -290,7 +291,7 @@ class DocumentStreamer:
         comment_data_list: list,
         comment_details_list: list,
         document_id: str,
-        conn,
+        uow: UnitOfWork,
         stats: dict,
         cost_tracker: CostTracker,
         progress_callback: Optional[Callable] = None,
@@ -301,7 +302,7 @@ class DocumentStreamer:
             comment_data_list: List of CommentData objects
             comment_details_list: List of comment detail dicts from API
             document_id: Document ID
-            conn: Database connection
+            uow: Unit of Work instance
             stats: Statistics dictionary to update
             cost_tracker: Cost tracker for API usage
             progress_callback: Optional callback for progress updates
@@ -331,7 +332,7 @@ class DocumentStreamer:
                     embedding = embeddings[i]
 
                     # Store comment with classification
-                    CommentRepository.store_comment(
+                    uow.comments.store_comment(
                         comment_details_list[i],
                         document_id,
                         category=classification["category"],
@@ -339,14 +340,12 @@ class DocumentStreamer:
                         topics=classification["topics"],
                         doctor_specialization=classification.get("doctor_specialization"),
                         licensed_professional_type=classification.get("licensed_professional_type"),
-                        conn=conn,
                     )
 
                     # Store comment chunks with embeddings
-                    CommentChunkRepository.store_comment_chunks(
+                    uow.chunks.store_comment_chunks(
                         comment_data.id,
                         embedding["chunks"],
-                        conn,
                     )
 
                     # Update statistics
@@ -368,7 +367,7 @@ class DocumentStreamer:
                     stats["errors"] += 1
 
             # Commit batch (sync operation)
-            conn.commit()
+            uow.commit()
 
             logger.info(
                 f"Consumer: Completed batch - "
@@ -428,10 +427,10 @@ class DocumentStreamer:
                 raise ValueError(f"No objectId found for document {document_id}")
 
             # Connect to database (sync connection)
-            with get_connection(self.db_path) as conn:
+            with UnitOfWork(self.db_path) as uow:
                 # Store document metadata
-                DocumentRepository.store_document(document_data, conn)
-                conn.commit()
+                uow.documents.store_document(document_data)
+                uow.commit()
                 logger.info(f"Stored document metadata for {document_id}")
 
                 # Notify progress callback that metadata is complete
@@ -462,7 +461,7 @@ class DocumentStreamer:
                     self._produce_comments(
                         object_id,
                         document_id,
-                        conn,
+                        uow,
                         queue,
                         stats,
                         last_api_call_time,
@@ -473,7 +472,7 @@ class DocumentStreamer:
                     self._consume_and_process_batches(
                         document_id,
                         queue,
-                        conn,
+                        uow,
                         stats,
                         cost_tracker,
                         progress_callback,

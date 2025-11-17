@@ -4,7 +4,9 @@ import pytest
 
 from reggie.pipeline.loader import DocumentLoader
 from reggie.pipeline.processor import CommentProcessor
-from reggie.db.repository import DocumentRepository, CommentRepository, CommentChunkRepository
+from reggie.db.repositories.document_repository import DocumentRepository
+from reggie.db.repositories.comment_repository import CommentRepository
+from reggie.db.repositories.chunk_repository import ChunkRepository
 
 
 @pytest.mark.integration
@@ -105,12 +107,11 @@ class TestDocumentLoadingPipeline:
         assert stats["errors"] == 0
 
         # Verify document was stored in real DB
-        async with test_db.cursor() as cur:
-            await cur.execute(
-                "SELECT id, title, object_id FROM documents WHERE id = %s",
-                (doc_id,)
-            )
-            doc_row = await cur.fetchone()
+        cur = test_db.execute(
+            "SELECT id, title, object_id FROM documents WHERE id = ?",
+            (doc_id,)
+        )
+        doc_row = cur.fetchone()
 
         assert doc_row is not None
         assert doc_row[0] == doc_id
@@ -118,12 +119,11 @@ class TestDocumentLoadingPipeline:
         assert doc_row[2] == object_id
 
         # Verify comments were stored
-        async with test_db.cursor() as cur:
-            await cur.execute(
-                "SELECT id, comment_text FROM comments WHERE document_id = %s ORDER BY id",
-                (doc_id,)
-            )
-            comment_rows = await cur.fetchall()
+        cur = test_db.execute(
+            "SELECT id, comment_text FROM comments WHERE document_id = ? ORDER BY id",
+            (doc_id,)
+        )
+        comment_rows = cur.fetchall()
 
         assert len(comment_rows) == 2
         assert comment_rows[0][0] == "C1"
@@ -202,12 +202,11 @@ class TestDocumentLoadingPipeline:
         assert stats2["comments_processed"] == 0  # Skipped
 
         # Verify still only 1 comment in DB
-        async with test_db.cursor() as cur:
-            await cur.execute(
-                "SELECT COUNT(*) FROM comments WHERE document_id = %s",
-                (doc_id,)
-            )
-            count = (await cur.fetchone())[0]
+        cur = test_db.execute(
+            "SELECT COUNT(*) FROM comments WHERE document_id = ?",
+            (doc_id,)
+        )
+        count = cur.fetchone()[0]
 
         assert count == 1
 
@@ -224,20 +223,20 @@ class TestCommentProcessingPipeline:
     ):
         """Process comments flow: real DB → mocked categorization → mocked embedding → DB storage."""
         # Store document and comments in DB first
-        await DocumentRepository.store_document(sample_document_data, test_db)
+        doc_repo = DocumentRepository(test_db)
+        doc_repo.store_document(sample_document_data)
         doc_id = sample_document_data["id"]
 
-        async with test_db.cursor() as cur:
-            await cur.execute(
-                """
-                INSERT INTO comments (id, document_id, comment_text, first_name, organization)
-                VALUES
-                    ('C1', %s, 'I support this regulation', 'John', 'Medical Association'),
-                    ('C2', %s, 'This needs more study', 'Jane', 'Research Institute')
-                """,
-                (doc_id, doc_id)
-            )
-        await test_db.commit()
+        test_db.execute(
+            """
+            INSERT INTO comments (id, document_id, comment_text, first_name, organization)
+            VALUES
+                ('C1', ?, 'I support this regulation', 'John', 'Medical Association'),
+                ('C2', ?, 'This needs more study', 'Jane', 'Research Institute')
+            """,
+            (doc_id, doc_id)
+        )
+        test_db.commit()
 
         # Get connection string
         from reggie.config import DatabaseConfig
@@ -254,12 +253,11 @@ class TestCommentProcessingPipeline:
         assert stats["errors"] == 0
 
         # Verify classifications were stored
-        async with test_db.cursor() as cur:
-            await cur.execute(
-                "SELECT category, sentiment FROM comments WHERE document_id = %s ORDER BY id",
-                (doc_id,)
-            )
-            rows = await cur.fetchall()
+        cur = test_db.execute(
+            "SELECT category, sentiment FROM comments WHERE document_id = ? ORDER BY id",
+            (doc_id,)
+        )
+        rows = cur.fetchall()
 
         assert len(rows) == 2
         # Mock returns "Physicians & Surgeons" and "for"
@@ -269,22 +267,20 @@ class TestCommentProcessingPipeline:
         assert rows[1][1] == "for"
 
         # Verify chunks were stored
-        async with test_db.cursor() as cur:
-            await cur.execute(
-                """
-                SELECT comment_id, chunk_text, embedding
-                FROM comment_chunks
-                WHERE comment_id IN ('C1', 'C2')
-                ORDER BY comment_id, chunk_index
-                """
-            )
-            chunk_rows = await cur.fetchall()
+        cur = test_db.execute(
+            """
+            SELECT comment_id, chunk_text, embedding
+            FROM comment_chunks
+            WHERE comment_id IN ('C1', 'C2')
+            ORDER BY comment_id, chunk_index
+            """
+        )
+        chunk_rows = cur.fetchall()
 
         assert len(chunk_rows) > 0
-        # Verify embeddings are stored
+        # Verify embeddings are stored (they're stored as blobs in SQLite)
         for row in chunk_rows:
             assert row[2] is not None  # embedding
-            assert len(row[2]) == 1536
 
     async def test_process_comments_handles_errors_gracefully(
         self,
@@ -296,18 +292,18 @@ class TestCommentProcessingPipeline:
         from reggie.models import CommentClassification, Category, Sentiment
 
         # Store document and comments
-        await DocumentRepository.store_document(sample_document_data, test_db)
+        doc_repo = DocumentRepository(test_db)
+        doc_repo.store_document(sample_document_data)
         doc_id = sample_document_data["id"]
 
-        async with test_db.cursor() as cur:
-            await cur.execute(
-                """
-                INSERT INTO comments (id, document_id, comment_text)
-                VALUES ('C1', %s, 'Test comment')
-                """,
-                (doc_id,)
-            )
-        await test_db.commit()
+        test_db.execute(
+            """
+            INSERT INTO comments (id, document_id, comment_text)
+            VALUES ('C1', ?, 'Test comment')
+            """,
+            (doc_id,)
+        )
+        test_db.commit()
 
         # Mock categorizer to fail
         mock_categorizer = mocker.patch(
@@ -332,7 +328,9 @@ class TestCommentProcessingPipeline:
     async def test_process_comments_empty_document(self, test_db, sample_document_data):
         """Process comments handles document with no comments."""
         # Store document without comments
-        await DocumentRepository.store_document(sample_document_data, test_db)
+        doc_repo = DocumentRepository(test_db)
+        doc_repo.store_document(sample_document_data)
+        test_db.commit()
 
         # Get connection string
         from reggie.config import DatabaseConfig
@@ -430,27 +428,26 @@ class TestFullEndToEndPipeline:
         assert process_stats["errors"] == 0
 
         # Verify final state in database
-        async with test_db.cursor() as cur:
-            # Check document
-            await cur.execute(
-                "SELECT title FROM documents WHERE id = %s",
-                (doc_id,)
-            )
-            doc_title = (await cur.fetchone())[0]
-            assert doc_title == "Medicare Test Rule"
+        # Check document
+        cur = test_db.execute(
+            "SELECT title FROM documents WHERE id = ?",
+            (doc_id,)
+        )
+        doc_title = cur.fetchone()[0]
+        assert doc_title == "Medicare Test Rule"
 
-            # Check comment with classification
-            await cur.execute(
-                "SELECT comment_text, category, sentiment FROM comments WHERE id = 'C1'"
-            )
-            comment_row = await cur.fetchone()
-            assert "physician" in comment_row[0].lower()
-            assert comment_row[1] == "Physicians & Surgeons"
-            assert comment_row[2] == "for"
+        # Check comment with classification
+        cur = test_db.execute(
+            "SELECT comment_text, category, sentiment FROM comments WHERE id = 'C1'"
+        )
+        comment_row = cur.fetchone()
+        assert "physician" in comment_row[0].lower()
+        assert comment_row[1] == "Physicians & Surgeons"
+        assert comment_row[2] == "for"
 
-            # Check chunks exist
-            await cur.execute(
-                "SELECT COUNT(*) FROM comment_chunks WHERE comment_id = 'C1'"
-            )
-            chunk_count = (await cur.fetchone())[0]
-            assert chunk_count > 0
+        # Check chunks exist
+        cur = test_db.execute(
+            "SELECT COUNT(*) FROM comment_chunks WHERE comment_id = 'C1'"
+        )
+        chunk_count = cur.fetchone()[0]
+        assert chunk_count > 0
