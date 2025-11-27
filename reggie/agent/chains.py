@@ -149,9 +149,9 @@ def create_vector_search_chain(
         # Generate embedding for query using LCEL chain
         embedding = await embedding_chain.ainvoke(query)
 
-        # Search using repository (sync database operation)
-        with UnitOfWork() as uow:
-            results = uow.chunks.search_by_vector(
+        # Search using repository (async database operation)
+        async with UnitOfWork() as uow:
+            results = await uow.chunks.search_by_vector(
                 document_id=document_id,
                 query_embedding=embedding,
                 limit=limit,

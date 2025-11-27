@@ -79,8 +79,8 @@ async def get_statistics(
             "topic_filter_mode": topic_filter_mode
         })
 
-    with UnitOfWork() as uow:
-        result = uow.comment_statistics.get_statistics(
+    async with UnitOfWork() as uow:
+        result = await uow.comment_statistics.get_statistics(
             document_id=document_id,
             group_by=group_by,
             sentiment_filter=sentiment_filter,

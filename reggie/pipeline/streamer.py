@@ -7,7 +7,7 @@ from typing import Optional, Callable, Dict
 from datetime import datetime
 
 from ..api import RegulationsAPIClient
-from ..db.connection import get_db_path
+from ..db.connection import get_database_url
 from ..db.unit_of_work import UnitOfWork
 from ..models import CommentData
 from ..utils import CostTracker, ErrorCollector
@@ -34,7 +34,7 @@ class DocumentStreamer:
         api_client: RegulationsAPIClient,
         categorization_stage: BatchCategorizationStage,
         embedding_stage: BatchEmbeddingStage,
-        db_path: str,
+        database_url: str,
         rate_limit_delay: float = 4.0,
         error_collector: Optional[ErrorCollector] = None,
     ):
@@ -44,14 +44,14 @@ class DocumentStreamer:
             api_client: API client for fetching comments
             categorization_stage: Stage for categorizing comments
             embedding_stage: Stage for embedding comments
-            db_path: SQLite database path
+            database_url: PostgreSQL database connection URL
             rate_limit_delay: Minimum seconds between API calls (default: 4.0)
             error_collector: Optional error collector for aggregating errors
         """
         self.api_client = api_client
         self.categorization_stage = categorization_stage
         self.embedding_stage = embedding_stage
-        self.db_path = db_path
+        self.database_url = database_url
         self.rate_limit_delay = rate_limit_delay
         self.error_collector = error_collector
 
@@ -64,7 +64,7 @@ class DocumentStreamer:
         cls,
         reg_api_key: Optional[str] = None,
         openai_api_key: Optional[str] = None,
-        db_path: Optional[str] = None,
+        database_url: Optional[str] = None,
         error_collector: Optional[ErrorCollector] = None,
     ) -> "DocumentStreamer":
         """Factory method to create a DocumentStreamer with default configuration.
@@ -72,7 +72,7 @@ class DocumentStreamer:
         Args:
             reg_api_key: Regulations.gov API key
             openai_api_key: OpenAI API key
-            db_path: SQLite database path
+            database_url: PostgreSQL database connection URL
             error_collector: Optional error collector for aggregating errors
 
         Returns:
@@ -91,14 +91,14 @@ class DocumentStreamer:
         categorization_stage = BatchCategorizationStage(categorizer)
         embedding_stage = BatchEmbeddingStage(embedder)
 
-        # Get database path
-        db_path_to_use = db_path or get_db_path()
+        # Get database connection URL
+        database_url_to_use = database_url or get_database_url()
 
         return cls(
             api_client=api_client,
             categorization_stage=categorization_stage,
             embedding_stage=embedding_stage,
-            db_path=db_path_to_use,
+            database_url=database_url_to_use,
             rate_limit_delay=config.reg_api_request_delay,
             error_collector=error_collector,
         )
@@ -128,8 +128,8 @@ class DocumentStreamer:
                 try:
                     comment_id = comment.get("id")
 
-                    # Check if comment already exists (sync operation)
-                    if uow.comments.comment_exists(comment_id):
+                    # Check if comment already exists (async operation)
+                    if await uow.comments.comment_exists(comment_id):
                         stats["skipped"] += 1
                         if stats["skipped"] % 100 == 0:
                             logger.info(f"Producer: Skipped {stats['skipped']} existing comments")
@@ -325,14 +325,14 @@ class DocumentStreamer:
             if total_embedding_tokens > 0:
                 cost_tracker.record_embedding_tokens(total_embedding_tokens, config.embedding_model)
 
-            # SAVE: Store all comments in batch (sync database operations)
+            # SAVE: Store all comments in batch (async database operations)
             for i, comment_data in enumerate(comment_data_list):
                 try:
                     classification = classifications[i]
                     embedding = embeddings[i]
 
                     # Store comment with classification
-                    uow.comments.store_comment(
+                    await uow.comments.store_comment(
                         comment_details_list[i],
                         document_id,
                         category=classification["category"],
@@ -343,7 +343,7 @@ class DocumentStreamer:
                     )
 
                     # Store comment chunks with embeddings
-                    uow.chunks.store_comment_chunks(
+                    await uow.chunks.store_comment_chunks(
                         comment_data.id,
                         embedding["chunks"],
                     )
@@ -366,8 +366,8 @@ class DocumentStreamer:
 
                     stats["errors"] += 1
 
-            # Commit batch (sync operation)
-            uow.commit()
+            # Commit batch (async operation)
+            await uow.commit()
 
             logger.info(
                 f"Consumer: Completed batch - "
@@ -426,11 +426,11 @@ class DocumentStreamer:
             if not object_id:
                 raise ValueError(f"No objectId found for document {document_id}")
 
-            # Connect to database (sync connection)
-            with UnitOfWork(self.db_path) as uow:
+            # Connect to database (async connection)
+            async with UnitOfWork(self.database_url) as uow:
                 # Store document metadata
-                uow.documents.store_document(document_data)
-                uow.commit()
+                await uow.documents.store_document(document_data)
+                await uow.commit()
                 logger.info(f"Stored document metadata for {document_id}")
 
                 # Notify progress callback that metadata is complete

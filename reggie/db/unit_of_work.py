@@ -1,9 +1,9 @@
 """Unit of Work pattern for managing database transactions and repository instances."""
 
-import sqlite3
+import psycopg
 from typing import Optional
 
-from .connection import get_db_path, load_sqlite_vec_extension, ensure_db_directory
+from .connection import get_database_url
 from .exceptions import DatabaseConnectionError
 
 
@@ -15,58 +15,55 @@ class UnitOfWork:
     All repositories share the same connection and transaction scope.
 
     Usage:
-        with UnitOfWork() as uow:
-            uow.documents.store_document(doc_data)
-            uow.comments.store_comment(comment_data, doc_id)
+        async with UnitOfWork() as uow:
+            await uow.documents.store_document(doc_data)
+            await uow.comments.store_comment(comment_data, doc_id)
             # Auto-commit on success, rollback on exception
     """
 
-    def __init__(self, db_path: Optional[str] = None):
+    def __init__(self, database_url: Optional[str] = None):
         """
         Initialize Unit of Work.
 
         Args:
-            db_path: Path to SQLite database file. If None, will be read from config.
+            database_url: PostgreSQL connection URL. If None, will be read from config.
         """
-        self.db_path = db_path or get_db_path()
-        self._conn: Optional[sqlite3.Connection] = None
+        self.database_url = database_url or get_database_url()
+        self._conn: Optional[psycopg.AsyncConnection] = None
         self._documents = None
         self._comments = None
         self._comment_statistics = None
         self._comment_analytics = None
         self._chunks = None
 
-    def __enter__(self):
-        """Enter context manager and initialize connection."""
+    async def __aenter__(self):
+        """Enter async context manager and initialize connection."""
         try:
-            # Ensure database directory exists
-            ensure_db_directory()
-
             # Connect to database
-            self._conn = sqlite3.connect(self.db_path)
-            self._conn.row_factory = sqlite3.Row  # Enable column access by name
-
-            # Load sqlite-vec extension
-            load_sqlite_vec_extension(self._conn)
+            self._conn = await psycopg.AsyncConnection.connect(
+                self.database_url,
+                row_factory=psycopg.rows.dict_row,
+                autocommit=False
+            )
 
             return self
         except Exception as e:
             if self._conn:
-                self._conn.close()
+                await self._conn.close()
             raise DatabaseConnectionError(f"Failed to establish database connection: {e}") from e
 
-    def __exit__(self, exc_type, exc_val, exc_tb):
-        """Exit context manager and handle transaction commit/rollback."""
+    async def __aexit__(self, exc_type, exc_val, exc_tb):
+        """Exit async context manager and handle transaction commit/rollback."""
         if self._conn:
             try:
                 if exc_type is None:
                     # No exception - commit transaction
-                    self._conn.commit()
+                    await self._conn.commit()
                 else:
                     # Exception occurred - rollback transaction
-                    self._conn.rollback()
+                    await self._conn.rollback()
             finally:
-                self._conn.close()
+                await self._conn.close()
                 self._conn = None
 
     @property
@@ -109,12 +106,12 @@ class UnitOfWork:
             self._chunks = ChunkRepository(self._conn)
         return self._chunks
 
-    def commit(self):
+    async def commit(self):
         """Manually commit the current transaction."""
         if self._conn:
-            self._conn.commit()
+            await self._conn.commit()
 
-    def rollback(self):
+    async def rollback(self):
         """Manually rollback the current transaction."""
         if self._conn:
-            self._conn.rollback()
+            await self._conn.rollback()

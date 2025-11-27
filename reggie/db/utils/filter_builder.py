@@ -1,6 +1,7 @@
 """SQL filter building utilities for comment queries."""
 
 from typing import Optional, List, Tuple
+import json
 
 
 def build_comment_filter_clause(
@@ -26,36 +27,36 @@ def build_comment_filter_clause(
     Returns:
         Tuple of (where_clause, params)
     """
-    where_clauses = ["c.document_id = ?"]
+    where_clauses = ["c.document_id = %s"]
     params = [document_id]
 
     if sentiment_filter:
-        where_clauses.append("c.sentiment = ?")
+        where_clauses.append("c.sentiment = %s")
         params.append(sentiment_filter)
 
     if category_filter:
-        where_clauses.append("c.category = ?")
+        where_clauses.append("c.category = %s")
         params.append(category_filter)
 
     if topics_filter:
-        # For SQLite, we need to use JSON functions to check array membership
+        # For PostgreSQL, we use JSONB array containment operators
         if topic_filter_mode == "all":
-            # Check that all topics from topics_filter are in the comment's topics
-            for topic in topics_filter:
-                where_clauses.append("EXISTS (SELECT 1 FROM json_each(c.topics) WHERE value = ?)")
-                params.append(topic)
+            # Check that c.topics contains all topics from topics_filter
+            # Use @> operator (contains)
+            where_clauses.append("c.topics @> %s::jsonb")
+            params.append(json.dumps(topics_filter))
         else:  # any
-            # Check if any topic from topics_filter is in the comment's topics
-            placeholders = ','.join('?' * len(topics_filter))
-            where_clauses.append(f"EXISTS (SELECT 1 FROM json_each(c.topics) WHERE value IN ({placeholders}))")
-            params.extend(topics_filter)
+            # Check if c.topics contains any of the topics from topics_filter
+            # Use ?| operator (contains any of the keys/values)
+            where_clauses.append("c.topics ?| %s")
+            params.append(topics_filter)
 
     if doctor_specialization_filter:
-        where_clauses.append("c.doctor_specialization = ?")
+        where_clauses.append("c.doctor_specialization = %s")
         params.append(doctor_specialization_filter)
 
     if licensed_professional_type_filter:
-        where_clauses.append("c.licensed_professional_type = ?")
+        where_clauses.append("c.licensed_professional_type = %s")
         params.append(licensed_professional_type_filter)
 
     return " AND ".join(where_clauses), params

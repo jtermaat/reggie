@@ -61,7 +61,7 @@ def init(force: bool):
             return
 
     with console.status("[bold green]Initializing database..."):
-        init_db()
+        asyncio.run(init_db())
 
     console.print("[bold green]✓[/bold green] Database initialized successfully!")
 
@@ -159,15 +159,15 @@ def process(document_id: str, batch_size: int, skip_processed: bool, trace: bool
 
     try:
         # Get comment count first to initialize progress display
-        def _get_count():
+        async def _get_count():
             from ..db.unit_of_work import UnitOfWork
 
-            with UnitOfWork() as uow:
-                return uow.comment_statistics.count_comments_for_document(
+            async with UnitOfWork() as uow:
+                return await uow.comment_statistics.count_comments_for_document(
                     document_id, skip_processed=skip_processed
                 )
 
-        total_comments = _get_count()
+        total_comments = asyncio.run(_get_count())
 
         if total_comments == 0:
             if skip_processed:
@@ -609,15 +609,16 @@ def visualize(document_id: str):
     from ..db.unit_of_work import UnitOfWork
     from ..agent.renderers import render_opposition_support_chart, render_opposition_support_by_specialization
 
-    def _visualize():
+    async def _visualize():
         """Generate and display the visualization."""
-        with UnitOfWork() as uow:
+        async with UnitOfWork() as uow:
             # Verify document exists
-            cur = uow._conn.execute(
-                "SELECT title FROM documents WHERE id = ?",
-                (document_id,)
-            )
-            doc = cur.fetchone()
+            async with uow._conn.cursor() as cur:
+                await cur.execute(
+                    "SELECT title FROM documents WHERE id = %s",
+                    (document_id,)
+                )
+                doc = await cur.fetchone()
 
             if not doc:
                 console.print(f"\n[red]Error: Document '{document_id}' not found.[/red]")
@@ -625,18 +626,20 @@ def visualize(document_id: str):
                 console.print("Use 'reggie load <document_id>' to load a new document.\n")
                 return
 
-            doc_title = doc[0]
+            doc_title = doc["title"]
 
             # Check for processed comments
-            cur = uow._conn.execute(
-                """
-                SELECT COUNT(DISTINCT c.id)
-                FROM comments c
-                WHERE c.document_id = ?
-                """,
-                (document_id,)
-            )
-            count = cur.fetchone()[0]
+            async with uow._conn.cursor() as cur:
+                await cur.execute(
+                    """
+                    SELECT COUNT(DISTINCT c.id)
+                    FROM comments c
+                    WHERE c.document_id = %s
+                    """,
+                    (document_id,)
+                )
+                row = await cur.fetchone()
+                count = row["count"] if row else 0
 
             if count == 0:
                 console.print(f"\n[yellow]Warning: Document '{document_id}' has no comments.[/yellow]")
@@ -644,7 +647,7 @@ def visualize(document_id: str):
                 return
 
             # Get sentiment by category data
-            breakdown = uow.comment_analytics.get_sentiment_by_category(
+            breakdown = await uow.comment_analytics.get_sentiment_by_category(
                 document_id=document_id
             )
 
@@ -670,7 +673,7 @@ def visualize(document_id: str):
             # SECTION 2: Render physician specializations breakdown
             physician_category = "Physicians & Surgeons"
             if physician_category in breakdown:
-                physician_breakdown = uow.comment_analytics.get_sentiment_by_specialization(
+                physician_breakdown = await uow.comment_analytics.get_sentiment_by_specialization(
                     document_id=document_id,
                     field_name="doctor_specialization",
                     category_filter=physician_category
@@ -689,7 +692,7 @@ def visualize(document_id: str):
             # SECTION 3: Render licensed professional types breakdown
             licensed_professional_category = "Other Licensed Clinicians"
             if licensed_professional_category in breakdown:
-                licensed_professional_breakdown = uow.comment_analytics.get_sentiment_by_specialization(
+                licensed_professional_breakdown = await uow.comment_analytics.get_sentiment_by_specialization(
                     document_id=document_id,
                     field_name="licensed_professional_type",
                     category_filter=licensed_professional_category
@@ -706,7 +709,7 @@ def visualize(document_id: str):
                     )
 
     try:
-        _visualize()
+        asyncio.run(_visualize())
     except Exception as e:
         console.print(f"\n[red]Error:[/red] {e}")
         logging.exception("Error generating visualization")

@@ -1,12 +1,11 @@
 """Shared pytest fixtures for all tests"""
 
 import os
-import sqlite3
-import tempfile
-from typing import Generator, Dict, Any
-from pathlib import Path
+from typing import Dict, Any, AsyncGenerator
 
 import pytest
+import pytest_asyncio
+import psycopg
 
 
 @pytest.fixture(scope="session", autouse=True)
@@ -17,6 +16,9 @@ def setup_test_env():
 
     # Set test environment variables
     os.environ["OPENAI_API_KEY"] = "sk-test-fake-key-for-testing"
+    # Set test database URL if not already set
+    if "DATABASE_URL" not in os.environ:
+        os.environ["DATABASE_URL"] = "postgresql://reggie:reggie@localhost:5432/reggie"
 
     yield
 
@@ -25,44 +27,34 @@ def setup_test_env():
     os.environ.update(original_env)
 
 
-@pytest.fixture
-def test_db() -> Generator[sqlite3.Connection, None, None]:
+@pytest_asyncio.fixture
+async def test_db() -> AsyncGenerator[psycopg.AsyncConnection, None]:
     """Provides a clean test database for each test.
 
-    Creates a temporary SQLite database, initializes schema, yields connection,
-    then deletes the database after the test.
+    Creates a test database connection, initializes schema, yields connection,
+    then cleans up tables after the test.
     """
-    from reggie.db.connection import _init_db_schema, load_sqlite_vec_extension
+    from reggie.db.connection import get_database_url, _init_db_schema
 
-    # Create temporary database file
-    temp_db = tempfile.NamedTemporaryFile(delete=False, suffix='.db')
-    temp_db.close()
-    db_path = temp_db.name
+    database_url = get_database_url()
 
-    try:
-        # Create connection
-        conn = sqlite3.connect(db_path)
-        conn.row_factory = sqlite3.Row
-
-        # Try to load sqlite-vec extension (may not be available on all platforms)
-        try:
-            load_sqlite_vec_extension(conn)
-        except RuntimeError as e:
-            # Extension loading not supported on this platform
-            # Tests that don't use vector search will still work
-            import warnings
-            warnings.warn(f"sqlite-vec extension not loaded: {e}", UserWarning)
-
+    # Connect to database
+    async with await psycopg.AsyncConnection.connect(
+        database_url,
+        row_factory=psycopg.rows.dict_row,
+        autocommit=False
+    ) as conn:
         # Initialize schema
-        _init_db_schema(conn)
+        await _init_db_schema(conn)
 
         yield conn
-    finally:
-        # Clean up
-        conn.close()
-        # Delete temporary database file
-        if os.path.exists(db_path):
-            os.unlink(db_path)
+
+        # Clean up tables after test
+        async with conn.cursor() as cur:
+            await cur.execute("""
+                TRUNCATE TABLE comment_chunks, comments, documents CASCADE;
+            """)
+        await conn.commit()
 
 
 @pytest.fixture

@@ -1,6 +1,6 @@
 """Database utilities for Reggie"""
 
-from .connection import get_connection, init_db, get_db_path
+from .connection import get_connection, init_db, get_database_url
 from .unit_of_work import UnitOfWork
 from .repositories import (
     DocumentRepository,
@@ -16,7 +16,7 @@ CommentChunkRepository = ChunkRepository
 __all__ = [
     "get_connection",
     "init_db",
-    "get_db_path",
+    "get_database_url",
     "UnitOfWork",
     "DocumentRepository",
     "CommentRepository",

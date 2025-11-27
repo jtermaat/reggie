@@ -10,7 +10,7 @@ class ReggieConfig(BaseSettings):
     """Unified configuration for reggie application."""
 
     # Database
-    sqlite_db_path: str = Field(default=os.path.expanduser("~/.reggie/reggie.db"))
+    database_url: str = Field(default="postgresql://reggie:reggie@localhost:5432/reggie")
 
     # API - Regulations.gov
     reg_api_key: str = Field(default="DEMO_KEY")
@@ -63,11 +63,6 @@ class ReggieConfig(BaseSettings):
         env_file_encoding = "utf-8"
         case_sensitive = False
         extra = "ignore"
-
-    @property
-    def db_path(self) -> str:
-        """Get absolute path to SQLite database file."""
-        return os.path.abspath(os.path.expanduser(self.sqlite_db_path))
 
     def apply_langsmith(self, enable_tracing: bool = False) -> None:
         """Apply LangSmith configuration to environment if enabled.

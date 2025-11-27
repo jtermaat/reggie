@@ -4,7 +4,7 @@ Reggie is an end-to-end tool for loading, processing, and analyzing comments on 
 
 Data is loaded from the public API and processed by tagging with a lightweight LLM and chunking/embedding for vector search.
 
-This data is saved in a local SQLite database and exposed through visualizations and query tools an agent can use to make statistical queries or text-based RAG searches (with optional filtering on the tagged metadata).  
+This data is saved in a local PostgreSQL database with pgvector for semantic search, and exposed through visualizations and query tools an agent can use to make statistical queries or text-based RAG searches (with optional filtering on the tagged metadata).  
 
 ## RAG Graph
 
@@ -15,10 +15,15 @@ This data is saved in a local SQLite database and exposed through visualizations
 ### Prerequisites
 
 - Python 3.9+
+- Docker Desktop (for easy setup) OR PostgreSQL 16+ with pgvector
 - OpenAI API key
 - Regulations.gov API Key
 
-### 1. Install Reggie
+### Setup: Option A - Docker Compose (Recommended)
+
+This is the easiest way to get started. Docker Compose will automatically set up PostgreSQL with the pgvector extension.
+
+#### 1. Install Reggie
 
 ```bash
 # Clone or navigate to the reggie directory
@@ -32,21 +37,82 @@ source .venv/bin/activate  # On Windows: .venv\Scripts\activate
 pip install -e .
 ```
 
-### 2. Configure Environment
+#### 2. Start PostgreSQL Database
+
+```bash
+# Start PostgreSQL with pgvector using Docker Compose
+docker compose up -d
+
+# The database will be ready in a few seconds
+# Connection details: postgresql://reggie:reggie@localhost:5432/reggie
+```
+
+#### 3. Configure Environment
 
 ```bash
 # Copy example env file
 cp .env.example .env
 
-# Edit .env and add your OpenAI API key
-# Minimum required:
-# OPENAI_API_KEY=[your OpenAI API key here]
-# REG_API_KEY=[your regulations.gov API Key]
+# Edit .env and add your API keys
+# Required:
+# OPENAI_API_KEY=[your OpenAI API key]
+# REG_API_KEY=[your Regulations.gov API key]
+#
+# DATABASE_URL is already configured for Docker Compose (postgresql://reggie:reggie@localhost:5432/reggie)
+```
+
+### Setup: Option B - Manual PostgreSQL Installation
+
+If you prefer to install PostgreSQL manually or use an existing PostgreSQL server:
+
+#### 1. Install PostgreSQL with pgvector
+
+**macOS (Homebrew):**
+```bash
+brew install postgresql@16
+brew install pgvector
+brew services start postgresql@16
+```
+
+**Ubuntu/Debian:**
+```bash
+sudo apt-get install postgresql-16 postgresql-16-pgvector
+sudo systemctl start postgresql
+```
+
+#### 2. Create Database and User
+
+```bash
+# Connect to PostgreSQL
+psql postgres
+
+# In PostgreSQL shell:
+CREATE DATABASE reggie;
+CREATE USER reggie WITH PASSWORD 'reggie';
+GRANT ALL PRIVILEGES ON DATABASE reggie TO reggie;
+\q
+```
+
+#### 3. Install Reggie & Configure
+
+```bash
+# Create virtual environment and install
+python -m venv .venv
+source .venv/bin/activate
+pip install -e .
+
+# Configure environment
+cp .env.example .env
+
+# Edit .env and set:
+# OPENAI_API_KEY=[your key]
+# REG_API_KEY=[your key]
+# DATABASE_URL=postgresql://reggie:reggie@localhost:5432/reggie
 ```
 
 ### 3. Process a Document
 
-The database will be automatically initialized on first use at `~/.reggie/reggie.db`.
+The database schema will be automatically initialized on first use.
 
 ```bash
 reggie stream CMS-2025-0304-0001
@@ -133,7 +199,7 @@ During processing, each comment is classified by a lightweight LLM (default: gpt
 
 Detailed enums can be viewed in [comment.py](https://github.com/jtermaat/reggie/blob/main/reggie/models/comment.py).
 
-These tags are stored as structured metadata in SQLite alongside the embeddings.
+These tags are stored as structured metadata in PostgreSQL (as JSONB) alongside the vector embeddings (using pgvector).
 
 ### Tools: Statistical Queries and Filtered RAG
 

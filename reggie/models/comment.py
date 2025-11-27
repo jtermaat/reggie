@@ -270,11 +270,11 @@ class CommentData(BaseModel):
             CommentData instance
         """
         return cls(
-            id=row[0],
-            comment_text=row[1] or "",
-            first_name=row[2],
-            last_name=row[3],
-            organization=row[4],
+            id=row["id"],
+            comment_text=row["comment_text"] or "",
+            first_name=row["first_name"],
+            last_name=row["last_name"],
+            organization=row["organization"],
         )
 
 

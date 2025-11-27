@@ -1,7 +1,7 @@
 """Repository for comment statistics and aggregation operations."""
 
 import logging
-import sqlite3
+import psycopg
 from typing import Optional, List, Tuple
 
 from ...models.agent import StatisticsResponse, StatisticsBreakdownItem
@@ -14,16 +14,16 @@ logger = logging.getLogger(__name__)
 class CommentStatisticsRepository:
     """Repository for comment statistics and aggregation operations."""
 
-    def __init__(self, connection: sqlite3.Connection):
+    def __init__(self, connection: psycopg.AsyncConnection):
         """
         Initialize repository with database connection.
 
         Args:
-            connection: SQLite database connection
+            connection: PostgreSQL async database connection
         """
         self._conn = connection
 
-    def count_comments_for_document(
+    async def count_comments_for_document(
         self,
         document_id: str,
         skip_processed: bool = False,
@@ -41,33 +41,34 @@ class CommentStatisticsRepository:
             RepositoryError: If database operation fails
         """
         try:
-            if skip_processed:
-                # Count only comments that haven't been categorized yet
-                cur = self._conn.execute(
-                    """
-                    SELECT COUNT(*)
-                    FROM comments
-                    WHERE document_id = ?
-                      AND category IS NULL
-                    """,
-                    (document_id,)
-                )
-            else:
-                # Count all comments
-                cur = self._conn.execute(
-                    """
-                    SELECT COUNT(*)
-                    FROM comments
-                    WHERE document_id = ?
-                    """,
-                    (document_id,)
-                )
-            row = cur.fetchone()
-            return row[0] if row else 0
-        except sqlite3.Error as e:
+            async with self._conn.cursor() as cur:
+                if skip_processed:
+                    # Count only comments that haven't been categorized yet
+                    await cur.execute(
+                        """
+                        SELECT COUNT(*)
+                        FROM comments
+                        WHERE document_id = %s
+                          AND category IS NULL
+                        """,
+                        (document_id,)
+                    )
+                else:
+                    # Count all comments
+                    await cur.execute(
+                        """
+                        SELECT COUNT(*)
+                        FROM comments
+                        WHERE document_id = %s
+                        """,
+                        (document_id,)
+                    )
+                row = await cur.fetchone()
+                return row["count"] if row else 0
+        except psycopg.Error as e:
             raise RepositoryError(f"Failed to count comments: {e}") from e
 
-    def get_statistics(
+    async def get_statistics(
         self,
         document_id: str,
         group_by: str,
@@ -108,20 +109,22 @@ class CommentStatisticsRepository:
             )
 
             # Get total count
-            cur = self._conn.execute(
-                f"SELECT COUNT(*) FROM comments c WHERE {where_clause}",
-                filter_params
-            )
-            total = cur.fetchone()[0]
+            async with self._conn.cursor() as cur:
+                await cur.execute(
+                    f"SELECT COUNT(*) FROM comments c WHERE {where_clause}",
+                    filter_params
+                )
+                row = await cur.fetchone()
+                total = row["count"]
 
             # Get breakdown - no ORDER BY, will sort in Python
             if group_by == "topic":
-                # Unnest topics JSON array for counting
+                # Unnest topics JSONB array for counting - use jsonb_array_elements_text
                 query = f"""
-                    SELECT value as topic, COUNT(*) as count
-                    FROM comments c, json_each(c.topics)
+                    SELECT jsonb_array_elements_text(c.topics) as topic, COUNT(*) as count
+                    FROM comments c
                     WHERE {where_clause}
-                    GROUP BY value
+                    GROUP BY topic
                 """
             else:
                 # Simple grouping
@@ -132,12 +135,16 @@ class CommentStatisticsRepository:
                     GROUP BY c.{group_by}
                 """
 
-            cur = self._conn.execute(query, filter_params)
-            rows = cur.fetchall()
+            async with self._conn.cursor() as cur:
+                await cur.execute(query, filter_params)
+                rows = await cur.fetchall()
 
             breakdown = []
             for row in rows:
-                value, count = row
+                if group_by == "topic":
+                    value, count = row["topic"], row["count"]
+                else:
+                    value, count = row["value"], row["count"]
                 breakdown.append(StatisticsBreakdownItem(
                     value=value or "unknown",
                     count=count,
@@ -151,7 +158,7 @@ class CommentStatisticsRepository:
                 total_comments=total,
                 breakdown=breakdown
             )
-        except sqlite3.Error as e:
+        except psycopg.Error as e:
             raise RepositoryError(f"Failed to get statistics: {e}") from e
 
     def _sort_breakdown_for_visualization(

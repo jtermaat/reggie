@@ -1,8 +1,7 @@
 """Repository for comment chunk and embedding operations."""
 
-import json
 import logging
-import sqlite3
+import psycopg
 from typing import List, Tuple, Optional
 
 from ...models.agent import CommentChunkSearchResult
@@ -16,16 +15,16 @@ logger = logging.getLogger(__name__)
 class ChunkRepository:
     """Repository for comment chunk and embedding operations."""
 
-    def __init__(self, connection: sqlite3.Connection):
+    def __init__(self, connection: psycopg.AsyncConnection):
         """
         Initialize repository with database connection.
 
         Args:
-            connection: SQLite database connection
+            connection: PostgreSQL async database connection
         """
         self._conn = connection
 
-    def delete_chunks_for_comment(self, comment_id: str) -> None:
+    async def delete_chunks_for_comment(self, comment_id: str) -> None:
         """Delete existing chunks for a comment.
 
         Args:
@@ -35,14 +34,15 @@ class ChunkRepository:
             RepositoryError: If database operation fails
         """
         try:
-            self._conn.execute(
-                "DELETE FROM comment_chunks WHERE comment_id = ?",
-                (comment_id,)
-            )
-        except sqlite3.Error as e:
+            async with self._conn.cursor() as cur:
+                await cur.execute(
+                    "DELETE FROM comment_chunks WHERE comment_id = %s",
+                    (comment_id,)
+                )
+        except psycopg.Error as e:
             raise RepositoryError(f"Failed to delete chunks for comment: {e}") from e
 
-    def store_comment_chunks(
+    async def store_comment_chunks(
         self,
         comment_id: str,
         chunks_with_embeddings: List[Tuple[str, List[float]]],
@@ -61,24 +61,25 @@ class ChunkRepository:
 
         try:
             # Delete existing chunks
-            self.delete_chunks_for_comment(comment_id)
+            await self.delete_chunks_for_comment(comment_id)
 
             # Insert new chunks
-            for idx, (chunk_text, embedding) in enumerate(chunks_with_embeddings):
-                # Serialize embedding to bytes
-                embedding_blob = serialize_vector(embedding)
+            async with self._conn.cursor() as cur:
+                for idx, (chunk_text, embedding) in enumerate(chunks_with_embeddings):
+                    # Serialize embedding (passthrough for pgvector)
+                    embedding_vector = serialize_vector(embedding)
 
-                self._conn.execute(
-                    """
-                    INSERT INTO comment_chunks (comment_id, chunk_text, chunk_index, embedding)
-                    VALUES (?, ?, ?, ?)
-                    """,
-                    (comment_id, chunk_text, idx, embedding_blob),
-                )
-        except sqlite3.Error as e:
+                    await cur.execute(
+                        """
+                        INSERT INTO comment_chunks (comment_id, chunk_text, chunk_index, embedding)
+                        VALUES (%s, %s, %s, %s)
+                        """,
+                        (comment_id, chunk_text, idx, embedding_vector),
+                    )
+        except psycopg.Error as e:
             raise RepositoryError(f"Failed to store comment chunks: {e}") from e
 
-    def search_by_vector(
+    async def search_by_vector(
         self,
         document_id: str,
         query_embedding: List[float],
@@ -116,16 +117,16 @@ class ChunkRepository:
                 doctor_specialization_filter, licensed_professional_type_filter
             )
 
-            # Serialize query embedding
-            query_blob = serialize_vector(query_embedding)
+            # Prepare query embedding for pgvector
+            query_vector = serialize_vector(query_embedding)
 
-            # Build the query using sqlite-vec's distance function
+            # Build the query using pgvector's <=> operator for cosine distance
             query = f"""
                 SELECT
                     cc.comment_id,
                     cc.chunk_text,
                     cc.chunk_index,
-                    vec_distance_cosine(cc.embedding, ?) as distance,
+                    (cc.embedding <=> %s::vector) as distance,
                     c.sentiment,
                     c.category,
                     c.topics
@@ -133,30 +134,31 @@ class ChunkRepository:
                 JOIN comments c ON cc.comment_id = c.id
                 WHERE {where_clause}
                 ORDER BY distance
-                LIMIT ?
+                LIMIT %s
             """
 
             # Assemble params in correct order
-            params = [query_blob] + filter_params + [limit]
+            params = [query_vector] + filter_params + [limit]
 
-            cur = self._conn.execute(query, params)
-            rows = cur.fetchall()
+            async with self._conn.cursor() as cur:
+                await cur.execute(query, params)
+                rows = await cur.fetchall()
 
             results = []
             for row in rows:
-                # Parse topics from JSON string
-                topics = json.loads(row[6]) if row[6] else []
+                # Topics is already JSONB, psycopg handles deserialization
+                topics = row["topics"] if row["topics"] else []
 
                 results.append(CommentChunkSearchResult(
-                    comment_id=row[0],
-                    chunk_text=row[1],
-                    chunk_index=row[2],
-                    distance=float(row[3]),
-                    sentiment=row[4],
-                    category=row[5],
+                    comment_id=row["comment_id"],
+                    chunk_text=row["chunk_text"],
+                    chunk_index=row["chunk_index"],
+                    distance=float(row["distance"]),
+                    sentiment=row["sentiment"],
+                    category=row["category"],
                     topics=topics
                 ))
 
             return results
-        except sqlite3.Error as e:
+        except psycopg.Error as e:
             raise RepositoryError(f"Failed to search by vector: {e}") from e

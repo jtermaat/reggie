@@ -1,9 +1,10 @@
 """Repository for document-related database operations."""
 
-import json
 import logging
-import sqlite3
+import psycopg
+from psycopg.types.json import Json
 from typing import List
+from datetime import datetime
 
 from ..exceptions import RepositoryError
 
@@ -13,16 +14,16 @@ logger = logging.getLogger(__name__)
 class DocumentRepository:
     """Repository for document-related database operations."""
 
-    def __init__(self, connection: sqlite3.Connection):
+    def __init__(self, connection: psycopg.AsyncConnection):
         """
         Initialize repository with database connection.
 
         Args:
-            connection: SQLite database connection
+            connection: PostgreSQL async database connection
         """
         self._conn = connection
 
-    def store_document(self, document_data: dict) -> None:
+    async def store_document(self, document_data: dict) -> None:
         """Store document metadata in database.
 
         Args:
@@ -34,32 +35,41 @@ class DocumentRepository:
         try:
             attrs = document_data.get("attributes", {})
 
-            self._conn.execute(
-                """
-                INSERT INTO documents (id, title, object_id, docket_id, document_type, posted_date, metadata)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
-                ON CONFLICT (id) DO UPDATE SET
-                    title = excluded.title,
-                    docket_id = excluded.docket_id,
-                    document_type = excluded.document_type,
-                    posted_date = excluded.posted_date,
-                    metadata = excluded.metadata,
-                    updated_at = CURRENT_TIMESTAMP
-                """,
-                (
-                    document_data.get("id"),
-                    attrs.get("title"),
-                    attrs.get("objectId"),
-                    attrs.get("docketId"),
-                    attrs.get("documentType"),
-                    attrs.get("postedDate"),
-                    json.dumps(attrs),
-                ),
-            )
-        except sqlite3.Error as e:
+            # Parse posted_date string to datetime if present
+            posted_date = attrs.get("postedDate")
+            if posted_date and isinstance(posted_date, str):
+                try:
+                    posted_date = datetime.fromisoformat(posted_date.replace('Z', '+00:00'))
+                except (ValueError, AttributeError):
+                    posted_date = None
+
+            async with self._conn.cursor() as cur:
+                await cur.execute(
+                    """
+                    INSERT INTO documents (id, title, object_id, docket_id, document_type, posted_date, metadata)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s)
+                    ON CONFLICT (id) DO UPDATE SET
+                        title = EXCLUDED.title,
+                        docket_id = EXCLUDED.docket_id,
+                        document_type = EXCLUDED.document_type,
+                        posted_date = EXCLUDED.posted_date,
+                        metadata = EXCLUDED.metadata,
+                        updated_at = CURRENT_TIMESTAMP
+                    """,
+                    (
+                        document_data.get("id"),
+                        attrs.get("title"),
+                        attrs.get("objectId"),
+                        attrs.get("docketId"),
+                        attrs.get("documentType"),
+                        posted_date,
+                        Json(attrs),  # Wrap dict for JSONB conversion
+                    ),
+                )
+        except psycopg.Error as e:
             raise RepositoryError(f"Failed to store document: {e}") from e
 
-    def list_documents(self) -> List[dict]:
+    async def list_documents(self) -> List[dict]:
         """List all documents with comment counts.
 
         Returns:
@@ -69,37 +79,38 @@ class DocumentRepository:
             RepositoryError: If database operation fails
         """
         try:
-            cur = self._conn.execute(
-                """
-                SELECT
-                    d.id,
-                    d.title,
-                    d.docket_id,
-                    d.posted_date,
-                    COUNT(c.id) as comment_count,
-                    COUNT(DISTINCT c.category) as unique_categories,
-                    d.created_at
-                FROM documents d
-                LEFT JOIN comments c ON d.id = c.document_id
-                GROUP BY d.id, d.title, d.docket_id, d.posted_date, d.created_at
-                ORDER BY d.created_at DESC
-                """
-            )
+            async with self._conn.cursor() as cur:
+                await cur.execute(
+                    """
+                    SELECT
+                        d.id,
+                        d.title,
+                        d.docket_id,
+                        d.posted_date,
+                        COUNT(c.id) as comment_count,
+                        COUNT(DISTINCT c.category) as unique_categories,
+                        d.created_at
+                    FROM documents d
+                    LEFT JOIN comments c ON d.id = c.document_id
+                    GROUP BY d.id, d.title, d.docket_id, d.posted_date, d.created_at
+                    ORDER BY d.created_at DESC
+                    """
+                )
 
-            rows = cur.fetchall()
+                rows = await cur.fetchall()
 
             documents = []
             for row in rows:
                 documents.append({
-                    "id": row[0],
-                    "title": row[1],
-                    "docket_id": row[2],
-                    "posted_date": row[3],
-                    "comment_count": row[4],
-                    "unique_categories": row[5],
-                    "loaded_at": row[6],
+                    "id": row["id"],
+                    "title": row["title"],
+                    "docket_id": row["docket_id"],
+                    "posted_date": row["posted_date"],
+                    "comment_count": row["comment_count"],
+                    "unique_categories": row["unique_categories"],
+                    "loaded_at": row["created_at"],
                 })
 
             return documents
-        except sqlite3.Error as e:
+        except psycopg.Error as e:
             raise RepositoryError(f"Failed to list documents: {e}") from e

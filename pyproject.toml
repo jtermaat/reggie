@@ -11,10 +11,12 @@ dependencies = [
     "langchain>=0.3.0",
     "langchain-openai>=0.2.0",
     "langchain-community>=0.3.0",
+    "langchain-postgres>=0.0.15",
     "langgraph>=0.2.0",
     "langsmith>=0.2.0",
     "openai>=1.0.0",
-    "sqlite-vec>=0.1.6",
+    "psycopg[binary]>=3.2.0",
+    "pgvector>=0.3.0",
     "python-dotenv>=1.0.0",
     "requests>=2.32.0",
     "urllib3<2.0.0",
@@ -35,7 +37,7 @@ reggie = "reggie.cli.main:main"
 include = ["reggie*"]
 
 [tool.setuptools.package-data]
-reggie = ["db/*.sql"]
+reggie = ["db/sql/**/*.sql"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

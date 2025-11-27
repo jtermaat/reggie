@@ -227,10 +227,10 @@ def create_rag_graph() -> StateGraph:
 
         snippets = []
 
-        with UnitOfWork() as uow:
+        async with UnitOfWork() as uow:
             for comment_id in relevant_ids:
                 # Get full comment text using repository
-                full_text = uow.comments.get_full_text(comment_id)
+                full_text = await uow.comments.get_full_text(comment_id)
 
                 if not full_text:
                     logger.warning(f"No text found for comment {comment_id}")

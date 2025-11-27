@@ -1,0 +1,41 @@
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    platform: linux/amd64
+    container_name: reggie-postgres
+    environment:
+      POSTGRES_USER: reggie
+      POSTGRES_PASSWORD: reggie
+      POSTGRES_DB: reggie
+    ports:
+      - "5432:5432"
+    volumes:
+      - reggie-postgres-data:/var/lib/postgresql/data
+      - ./reggie/db/sql/schema/schema.sql:/docker-entrypoint-initdb.d/schema.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U reggie"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  # Optional: Uncomment to add pgAdmin for database management
+  # pgadmin:
+  #   image: dpage/pgadmin4:latest
+  #   container_name: reggie-pgadmin
+  #   environment:
+  #     PGADMIN_DEFAULT_EMAIL: admin@reggie.local
+  #     PGADMIN_DEFAULT_PASSWORD: admin
+  #   ports:
+  #     - "5050:80"
+  #   depends_on:
+  #     - postgres
+  #   restart: unless-stopped
+  #
+  # After starting: Access pgAdmin at http://localhost:5050
+  # Login with admin@reggie.local / admin
+  # Add server: Host=postgres, Port=5432, User=reggie, Password=reggie, Database=reggie
+
+volumes:
+  reggie-postgres-data:
+    driver: local

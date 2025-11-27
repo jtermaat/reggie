@@ -1,92 +1,48 @@
 """Database connection utilities"""
 
-import os
-import sqlite3
 from pathlib import Path
-from contextlib import contextmanager
-from typing import Generator
+from contextlib import asynccontextmanager
+from typing import AsyncGenerator
 
-import sqlite_vec
+import psycopg
+from psycopg.rows import dict_row
 
 from ..config import get_config
 
 
-def get_db_path() -> str:
-    """Get SQLite database path from configuration."""
+def get_database_url() -> str:
+    """Get PostgreSQL database URL from configuration."""
     config = get_config()
-    return config.db_path
+    return config.database_url
 
 
-def ensure_db_directory() -> None:
-    """Ensure the database directory exists."""
-    db_path = get_db_path()
-    db_dir = os.path.dirname(db_path)
-    if db_dir and not os.path.exists(db_dir):
-        os.makedirs(db_dir, exist_ok=True)
-
-
-def load_sqlite_vec_extension(conn: sqlite3.Connection) -> None:
-    """Load the sqlite-vec extension into the connection.
+@asynccontextmanager
+async def get_connection(database_url: str = None) -> AsyncGenerator[psycopg.AsyncConnection, None]:
+    """Get a database connection as an async context manager.
 
     Args:
-        conn: SQLite connection
-
-    Raises:
-        RuntimeError: If extension loading is not supported
-    """
-    if not hasattr(conn, 'enable_load_extension'):
-        raise RuntimeError(
-            "SQLite extension loading not available. "
-            "On macOS, you may need to compile Python with a custom SQLite library. "
-            "For development/testing, vector search features will not be available."
-        )
-
-    conn.enable_load_extension(True)
-    sqlite_vec.load(conn)
-    conn.enable_load_extension(False)
-
-
-@contextmanager
-def get_connection(db_path: str = None) -> Generator[sqlite3.Connection, None, None]:
-    """Get a database connection as a context manager.
-
-    Args:
-        db_path: Path to SQLite database file. If None, will be read from config.
+        database_url: PostgreSQL connection URL. If None, will be read from config.
 
     Yields:
-        sqlite3.Connection
+        psycopg.AsyncConnection
     """
-    if db_path is None:
-        db_path = get_db_path()
+    if database_url is None:
+        database_url = get_database_url()
 
-    # Ensure database directory exists
-    ensure_db_directory()
-
-    # Check if database needs initialization
-    db_exists = os.path.exists(db_path)
-
-    # Connect to database
-    conn = sqlite3.connect(db_path)
-    conn.row_factory = sqlite3.Row  # Enable column access by name
-
-    try:
-        # Load sqlite-vec extension
-        load_sqlite_vec_extension(conn)
-
-        # Auto-initialize database if it doesn't exist
-        if not db_exists:
-            _init_db_schema(conn)
-
+    # Connect to database with dict_row factory for named column access
+    async with await psycopg.AsyncConnection.connect(
+        database_url,
+        row_factory=dict_row,
+        autocommit=False
+    ) as conn:
         yield conn
-    finally:
-        conn.close()
 
 
-def _init_db_schema(conn: sqlite3.Connection) -> None:
+async def _init_db_schema(conn: psycopg.AsyncConnection) -> None:
     """Initialize the database schema (internal function).
 
     Args:
-        conn: SQLite connection
+        conn: PostgreSQL async connection
     """
     # Read schema file
     schema_path = Path(__file__).parent / "sql" / "schema" / "schema.sql"
@@ -94,21 +50,19 @@ def _init_db_schema(conn: sqlite3.Connection) -> None:
         schema_sql = f.read()
 
     # Execute schema
-    conn.executescript(schema_sql)
-    conn.commit()
+    async with conn.cursor() as cur:
+        await cur.execute(schema_sql)
+    await conn.commit()
 
 
-def init_db(db_path: str = None) -> None:
+async def init_db(database_url: str = None) -> None:
     """Initialize the database schema.
 
     Args:
-        db_path: Path to SQLite database file. If None, will be read from config.
+        database_url: PostgreSQL connection URL. If None, will be read from config.
     """
-    if db_path is None:
-        db_path = get_db_path()
-
-    # Ensure database directory exists
-    ensure_db_directory()
+    if database_url is None:
+        database_url = get_database_url()
 
     # Read schema file
     schema_path = Path(__file__).parent / "sql" / "schema" / "schema.sql"
@@ -116,8 +70,9 @@ def init_db(db_path: str = None) -> None:
         schema_sql = f.read()
 
     # Connect and execute schema
-    with get_connection(db_path) as conn:
-        conn.executescript(schema_sql)
-        conn.commit()
+    async with get_connection(database_url) as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(schema_sql)
+        await conn.commit()
 
-    print(f"Database initialized successfully at {db_path}")
+    print(f"Database initialized successfully at {database_url}")

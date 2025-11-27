@@ -6,7 +6,7 @@ from typing import List, Dict, Tuple, Optional
 
 import tiktoken
 from langchain_openai import OpenAIEmbeddings
-from langchain.text_splitter import RecursiveCharacterTextSplitter
+from langchain_text_splitters import RecursiveCharacterTextSplitter
 
 from ..config import get_config
 from ..exceptions import ConfigurationException

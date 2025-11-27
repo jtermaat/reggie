@@ -18,18 +18,18 @@ class DocumentLoader:
     def __init__(
         self,
         reg_api_key: Optional[str] = None,
-        db_path: Optional[str] = None,
+        database_url: Optional[str] = None,
         error_collector: Optional[ErrorCollector] = None,
     ):
         """Initialize the document loader.
 
         Args:
             reg_api_key: Regulations.gov API key
-            db_path: SQLite database path
+            database_url: PostgreSQL database connection URL
             error_collector: Optional error collector for aggregating errors
         """
         self.api_client = RegulationsAPIClient(api_key=reg_api_key)
-        self.db_path = db_path
+        self.database_url = database_url
         self.error_collector = error_collector
 
 
@@ -75,11 +75,11 @@ class DocumentLoader:
             if not object_id:
                 raise ValueError(f"No objectId found for document {document_id}")
 
-            # Connect to database (sync connection)
-            with UnitOfWork(self.db_path) as uow:
+            # Connect to database (async connection)
+            async with UnitOfWork(self.database_url) as uow:
                 # Store document
-                uow.documents.store_document(document_data)
-                uow.commit()
+                await uow.documents.store_document(document_data)
+                await uow.commit()
                 logger.info(f"Stored document metadata for {document_id}")
 
                 # Notify progress callback that metadata is complete
@@ -109,7 +109,7 @@ class DocumentLoader:
                         comment_id = comment.get("id")
 
                         # Skip if comment already exists (check before fetching details to save API calls)
-                        if uow.comments.comment_exists(comment_id):
+                        if await uow.comments.comment_exists(comment_id):
                             skipped_comments += 1
                             if skipped_comments % 100 == 0:
                                 logger.info(f"Skipped {skipped_comments} existing comments")
@@ -127,7 +127,7 @@ class DocumentLoader:
                         comment_detail = await self.api_client.get_comment_details(comment_id)
 
                         # Store comment immediately
-                        uow.comments.store_comment(
+                        await uow.comments.store_comment(
                             comment_detail,
                             document_id,
                             category=None,
@@ -147,7 +147,7 @@ class DocumentLoader:
 
                         # Commit every N comments so data is visible
                         if total_comments_fetched % commit_every == 0:
-                            uow.commit()
+                            await uow.commit()
                             logger.info(
                                 f"Stored {total_comments_fetched} comments "
                                 f"(committed to database)"
@@ -169,7 +169,7 @@ class DocumentLoader:
 
                 # Final commit for any remaining comments
                 if total_comments_fetched % commit_every != 0:
-                    uow.commit()
+                    await uow.commit()
                     logger.info(
                         f"Stored {total_comments_fetched} comments total "
                         f"(all committed to database)"
@@ -216,5 +216,5 @@ class DocumentLoader:
         Returns:
             List of document summaries with comment counts
         """
-        with UnitOfWork(self.db_path) as uow:
-            return uow.documents.list_documents()
+        async with UnitOfWork(self.database_url) as uow:
+            return await uow.documents.list_documents()
