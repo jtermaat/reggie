@@ -69,6 +69,81 @@ class DocumentRepository:
         except psycopg.Error as e:
             raise RepositoryError(f"Failed to store document: {e}") from e
 
+    async def document_exists(self, document_id: str) -> bool:
+        """Check if a document exists in the database.
+
+        Args:
+            document_id: The document ID to check
+
+        Returns:
+            True if document exists, False otherwise
+
+        Raises:
+            RepositoryError: If database operation fails
+        """
+        try:
+            async with self._conn.cursor() as cur:
+                await cur.execute(
+                    "SELECT 1 FROM documents WHERE id = %s",
+                    (document_id,)
+                )
+                return await cur.fetchone() is not None
+        except psycopg.Error as e:
+            raise RepositoryError(f"Failed to check document existence: {e}") from e
+
+    async def delete_document(self, document_id: str) -> dict:
+        """Delete a document and all related data (comments, chunks).
+
+        Due to ON DELETE CASCADE constraints, deleting the document
+        automatically removes all associated comments and comment_chunks.
+
+        Args:
+            document_id: The document ID to delete
+
+        Returns:
+            Dictionary with counts of deleted entities
+
+        Raises:
+            RepositoryError: If database operation fails
+        """
+        try:
+            # First, count the related entities before deletion
+            async with self._conn.cursor() as cur:
+                # Count comments
+                await cur.execute(
+                    "SELECT COUNT(*) as count FROM comments WHERE document_id = %s",
+                    (document_id,)
+                )
+                row = await cur.fetchone()
+                comment_count = row["count"] if row else 0
+
+                # Count chunks (through comments)
+                await cur.execute(
+                    """
+                    SELECT COUNT(*) as count FROM comment_chunks cc
+                    JOIN comments c ON cc.comment_id = c.id
+                    WHERE c.document_id = %s
+                    """,
+                    (document_id,)
+                )
+                row = await cur.fetchone()
+                chunk_count = row["count"] if row else 0
+
+                # Delete the document (cascades to comments and chunks)
+                await cur.execute(
+                    "DELETE FROM documents WHERE id = %s",
+                    (document_id,)
+                )
+                deleted_count = cur.rowcount
+
+            return {
+                "document_deleted": deleted_count > 0,
+                "comments_deleted": comment_count,
+                "chunks_deleted": chunk_count,
+            }
+        except psycopg.Error as e:
+            raise RepositoryError(f"Failed to delete document: {e}") from e
+
     async def list_documents(self) -> List[dict]:
         """List all documents with comment counts.
 

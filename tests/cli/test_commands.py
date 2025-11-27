@@ -294,6 +294,108 @@ class TestListCommand:
 
 
 @pytest.mark.cli
+class TestClearCommand:
+    """Test 'reggie clear' command."""
+
+    def test_clear_command_requires_document_id(self):
+        """Clear command requires document_id argument."""
+        runner = CliRunner()
+        result = runner.invoke(cli, ["clear"])
+
+        assert result.exit_code != 0
+        assert "Missing argument" in result.output or "Usage:" in result.output
+
+    def test_clear_command_document_not_found(self, mocker):
+        """Clear command shows message when document not found."""
+        # Mock UnitOfWork - patch where it's imported
+        mock_uow_class = mocker.patch("reggie.db.unit_of_work.UnitOfWork")
+        mock_uow_instance = mocker.AsyncMock()
+        mock_uow_class.return_value.__aenter__.return_value = mock_uow_instance
+        mock_uow_instance.documents.document_exists = mocker.AsyncMock(return_value=False)
+
+        runner = CliRunner()
+        result = runner.invoke(cli, ["clear", "NONEXISTENT-DOC"])
+
+        assert result.exit_code == 0
+        assert "not found" in result.output
+
+    def test_clear_command_prompts_confirmation(self, mocker):
+        """Clear command prompts for confirmation."""
+        # Mock UnitOfWork - patch where it's imported
+        mock_uow_class = mocker.patch("reggie.db.unit_of_work.UnitOfWork")
+        mock_uow_instance = mocker.AsyncMock()
+        mock_uow_class.return_value.__aenter__.return_value = mock_uow_instance
+        mock_uow_instance.documents.document_exists = mocker.AsyncMock(return_value=True)
+        mock_uow_instance.documents.delete_document = mocker.AsyncMock(
+            return_value={"document_deleted": True, "comments_deleted": 10, "chunks_deleted": 30}
+        )
+
+        runner = CliRunner()
+        # Provide 'n' to decline confirmation
+        result = runner.invoke(cli, ["clear", "CMS-2024-0001-0001"], input="n\n")
+
+        assert result.exit_code == 0
+        assert "Warning:" in result.output
+        assert "Aborted" in result.output
+
+    def test_clear_command_confirmed_success(self, mocker):
+        """Clear command deletes document when confirmed."""
+        # Mock UnitOfWork - patch where it's imported
+        mock_uow_class = mocker.patch("reggie.db.unit_of_work.UnitOfWork")
+        mock_uow_instance = mocker.AsyncMock()
+        mock_uow_class.return_value.__aenter__.return_value = mock_uow_instance
+        mock_uow_instance.documents.document_exists = mocker.AsyncMock(return_value=True)
+        mock_uow_instance.documents.delete_document = mocker.AsyncMock(
+            return_value={"document_deleted": True, "comments_deleted": 10, "chunks_deleted": 30}
+        )
+
+        runner = CliRunner()
+        # Provide 'y' to confirm
+        result = runner.invoke(cli, ["clear", "CMS-2024-0001-0001"], input="y\n")
+
+        assert result.exit_code == 0
+        assert "Document cleared successfully" in result.output
+        assert "Comments: 10" in result.output
+        assert "Chunks: 30" in result.output
+
+    def test_clear_command_force_skips_confirmation(self, mocker):
+        """Clear command with --force skips confirmation."""
+        # Mock UnitOfWork - patch where it's imported
+        mock_uow_class = mocker.patch("reggie.db.unit_of_work.UnitOfWork")
+        mock_uow_instance = mocker.AsyncMock()
+        mock_uow_class.return_value.__aenter__.return_value = mock_uow_instance
+        mock_uow_instance.documents.document_exists = mocker.AsyncMock(return_value=True)
+        mock_uow_instance.documents.delete_document = mocker.AsyncMock(
+            return_value={"document_deleted": True, "comments_deleted": 5, "chunks_deleted": 15}
+        )
+
+        runner = CliRunner()
+        result = runner.invoke(cli, ["clear", "CMS-2024-0001-0001", "--force"])
+
+        assert result.exit_code == 0
+        assert "Document cleared successfully" in result.output
+        # No confirmation prompt should appear
+        assert "Are you sure" not in result.output
+
+    def test_clear_command_displays_error_on_failure(self, mocker):
+        """Clear command displays error when deletion fails."""
+        # Mock UnitOfWork - patch where it's imported
+        mock_uow_class = mocker.patch("reggie.db.unit_of_work.UnitOfWork")
+        mock_uow_instance = mocker.AsyncMock()
+        mock_uow_class.return_value.__aenter__.return_value = mock_uow_instance
+        mock_uow_instance.documents.document_exists = mocker.AsyncMock(
+            side_effect=Exception("Database error")
+        )
+
+        runner = CliRunner()
+        result = runner.invoke(cli, ["clear", "CMS-2024-0001-0001", "--force"])
+
+        assert result.exit_code == 0
+        assert "Error:" in result.output
+        assert "Database error" in result.output
+
+
+@pytest.mark.cli
 class TestDiscussCommand:
     """Test 'reggie discuss' command."""
 
@@ -344,3 +446,13 @@ class TestCLIHelpText:
         assert result.exit_code == 0
         assert "DOCUMENT_ID" in result.output
         assert "batch-size" in result.output.lower()
+
+    def test_clear_command_help(self):
+        """Clear command shows help text."""
+        runner = CliRunner()
+        result = runner.invoke(cli, ["clear", "--help"])
+
+        assert result.exit_code == 0
+        assert "DOCUMENT_ID" in result.output
+        assert "force" in result.output.lower()
+        assert "re-ingested" in result.output

@@ -340,6 +340,75 @@ def list():
 @cli.command()
 @click.argument("document_id")
 @click.option(
+    "--force",
+    is_flag=True,
+    help="Skip confirmation prompt",
+)
+def clear(document_id: str, force: bool):
+    """Clear a document and all its data from the database.
+
+    DOCUMENT_ID: The document ID to clear (e.g., CMS-2025-0304-0009)
+
+    This removes the document and all associated comments and embeddings,
+    allowing it to be re-ingested if needed.
+
+    Example:
+        reggie clear CMS-2025-0304-0009
+        reggie clear CMS-2025-0304-0009 --force
+    """
+    from ..db.unit_of_work import UnitOfWork
+
+    async def _clear():
+        async with UnitOfWork() as uow:
+            # Check if document exists
+            exists = await uow.documents.document_exists(document_id)
+            if not exists:
+                return None
+
+            # Delete the document
+            return await uow.documents.delete_document(document_id)
+
+    try:
+        # First check if the document exists
+        async def _check_exists():
+            async with UnitOfWork() as uow:
+                return await uow.documents.document_exists(document_id)
+
+        exists = asyncio.run(_check_exists())
+
+        if not exists:
+            console.print(f"\n[yellow]Document '{document_id}' not found.[/yellow]")
+            console.print("\nUse 'reggie list' to see available documents.\n")
+            return
+
+        # Confirm deletion unless --force is used
+        if not force:
+            console.print(f"\n[yellow]Warning: This will permanently delete document '{document_id}' and all its data![/yellow]")
+            if not click.confirm("Are you sure you want to continue?"):
+                console.print("[red]Aborted.[/red]")
+                return
+
+        with console.status(f"[bold green]Clearing document '{document_id}'..."):
+            result = asyncio.run(_clear())
+
+        if result and result["document_deleted"]:
+            console.print(f"\n[bold green]✓[/bold green] Document cleared successfully!\n")
+            console.print("[bold]Deleted:[/bold]")
+            console.print(f"  • Document: {document_id}")
+            console.print(f"  • Comments: {result['comments_deleted']}")
+            console.print(f"  • Chunks: {result['chunks_deleted']}")
+            console.print()
+        else:
+            console.print(f"\n[yellow]Document '{document_id}' not found.[/yellow]\n")
+
+    except Exception as e:
+        console.print(f"\n[red]Error:[/red] {e}")
+        logging.exception("Error clearing document")
+
+
+@cli.command()
+@click.argument("document_id")
+@click.option(
     "--trace",
     is_flag=True,
     help="Enable LangSmith tracing for debugging and evaluation",
