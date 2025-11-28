@@ -117,17 +117,17 @@ class TestEmbedding:
     """Test embedding generation."""
 
     async def test_embed_chunks_empty_list_returns_empty(self, mocker):
-        """Embedding empty list returns empty list."""
+        """Embedding empty list returns empty tuple with zero token count."""
         mocker.patch("reggie.pipeline.embedder.OpenAIEmbeddings")
         mocker.patch("reggie.pipeline.embedder.tiktoken")
 
         embedder = CommentEmbedder(openai_api_key="sk-test-key")
         embeddings = await embedder.embed_chunks([])
 
-        assert embeddings == []
+        assert embeddings == ([], 0)
 
     async def test_embed_chunks_success(self, mocker):
-        """Embedding chunks returns vectors."""
+        """Embedding chunks returns vectors and token count."""
         mock_embeddings = mocker.patch("reggie.pipeline.embedder.OpenAIEmbeddings")
         mock_instance = mock_embeddings.return_value
         mock_instance.aembed_documents = AsyncMock(
@@ -136,16 +136,17 @@ class TestEmbedding:
         mocker.patch("reggie.pipeline.embedder.tiktoken")
 
         embedder = CommentEmbedder(openai_api_key="sk-test-key")
-        embeddings = await embedder.embed_chunks(["Chunk 1", "Chunk 2"])
+        embeddings, token_count = await embedder.embed_chunks(["Chunk 1", "Chunk 2"])
 
         assert len(embeddings) == 2
         assert len(embeddings[0]) == 1536
         assert len(embeddings[1]) == 1536
         assert embeddings[0][0] == 0.1
         assert embeddings[1][0] == 0.2
+        assert isinstance(token_count, int)
 
     async def test_embed_chunks_error_returns_zero_vectors(self, mocker):
-        """Embedding error returns zero vectors."""
+        """Embedding error returns zero vectors and token count."""
         mock_embeddings = mocker.patch("reggie.pipeline.embedder.OpenAIEmbeddings")
         mock_instance = mock_embeddings.return_value
         mock_instance.aembed_documents = AsyncMock(
@@ -154,13 +155,14 @@ class TestEmbedding:
         mocker.patch("reggie.pipeline.embedder.tiktoken")
 
         embedder = CommentEmbedder(openai_api_key="sk-test-key")
-        embeddings = await embedder.embed_chunks(["Chunk 1"])
+        embeddings, token_count = await embedder.embed_chunks(["Chunk 1"])
 
         assert len(embeddings) == 1
         assert embeddings[0] == [0.0] * 1536  # Zero vector
+        assert isinstance(token_count, int)
 
     async def test_embed_chunks_batch_processing(self, mocker):
-        """Embedding processes in batches."""
+        """Embedding processes in batches and returns token count."""
         mock_embeddings = mocker.patch("reggie.pipeline.embedder.OpenAIEmbeddings")
         mock_instance = mock_embeddings.return_value
 
@@ -179,11 +181,12 @@ class TestEmbedding:
 
         # Create 250 chunks, batch_size=100
         chunks = [f"Chunk {i}" for i in range(250)]
-        embeddings = await embedder.embed_chunks(chunks, batch_size=100)
+        embeddings, token_count = await embedder.embed_chunks(chunks, batch_size=100)
 
         assert len(embeddings) == 250
         # Should have 3 batches: 100, 100, 50
         assert batch_sizes == [100, 100, 50]
+        assert isinstance(token_count, int)
 
 
 @pytest.mark.unit
@@ -191,17 +194,17 @@ class TestChunkAndEmbed:
     """Test combined chunking and embedding."""
 
     async def test_chunk_and_embed_empty_text(self, mocker):
-        """Chunk and embed empty text returns empty list."""
+        """Chunk and embed empty text returns empty tuple with zero token count."""
         mocker.patch("reggie.pipeline.embedder.OpenAIEmbeddings")
         mocker.patch("reggie.pipeline.embedder.tiktoken")
 
         embedder = CommentEmbedder(openai_api_key="sk-test-key")
         result = await embedder.chunk_and_embed("")
 
-        assert result == []
+        assert result == ([], 0)
 
     async def test_chunk_and_embed_returns_tuples(self, mocker):
-        """Chunk and embed returns (chunk, embedding) tuples."""
+        """Chunk and embed returns (chunk, embedding) tuples and token count."""
         mock_embeddings = mocker.patch("reggie.pipeline.embedder.OpenAIEmbeddings")
         mock_instance = mock_embeddings.return_value
         mock_instance.aembed_documents = AsyncMock(
@@ -218,11 +221,12 @@ class TestChunkAndEmbed:
         )
 
         embedder = CommentEmbedder(openai_api_key="sk-test-key")
-        result = await embedder.chunk_and_embed("Some text to chunk and embed")
+        result, token_count = await embedder.chunk_and_embed("Some text to chunk and embed")
 
         assert len(result) == 2
         assert result[0] == ("Chunk 1", [0.1] * 1536)
         assert result[1] == ("Chunk 2", [0.2] * 1536)
+        assert isinstance(token_count, int)
 
 
 @pytest.mark.unit
@@ -230,7 +234,7 @@ class TestBatchProcessing:
     """Test batch comment processing."""
 
     async def test_process_comments_batch_all_success(self, mocker):
-        """Batch processing handles all successful comments."""
+        """Batch processing handles all successful comments and returns token counts."""
         mock_embeddings = mocker.patch("reggie.pipeline.embedder.OpenAIEmbeddings")
         mock_instance = mock_embeddings.return_value
         mock_instance.aembed_documents = AsyncMock(
@@ -258,11 +262,13 @@ class TestBatchProcessing:
 
         assert len(results) == 3
         for result in results:
-            assert len(result) == 1  # One chunk per comment
-            assert result[0][0] == "Chunk"
+            chunks_embeddings, token_count = result
+            assert len(chunks_embeddings) == 1  # One chunk per comment
+            assert chunks_embeddings[0][0] == "Chunk"
+            assert isinstance(token_count, int)
 
     async def test_process_comments_batch_handles_errors(self, mocker):
-        """Batch processing handles errors gracefully."""
+        """Batch processing handles errors gracefully and returns token counts."""
         mock_embeddings = mocker.patch("reggie.pipeline.embedder.OpenAIEmbeddings")
         mock_instance = mock_embeddings.return_value
 
@@ -296,14 +302,20 @@ class TestBatchProcessing:
 
         assert len(results) == 3
         # First should succeed
-        assert len(results[0]) == 1
-        assert results[0][0][1] == [0.1] * 1536
+        chunks_embeddings_0, token_count_0 = results[0]
+        assert len(chunks_embeddings_0) == 1
+        assert chunks_embeddings_0[0][1] == [0.1] * 1536
+        assert isinstance(token_count_0, int)
         # Second gets zero vector due to embedding error (but chunk still exists)
-        assert len(results[1]) == 1
-        assert results[1][0][1] == [0.0] * 1536  # Zero vector fallback
+        chunks_embeddings_1, token_count_1 = results[1]
+        assert len(chunks_embeddings_1) == 1
+        assert chunks_embeddings_1[0][1] == [0.0] * 1536  # Zero vector fallback
+        assert isinstance(token_count_1, int)
         # Third should succeed
-        assert len(results[2]) == 1
-        assert results[2][0][1] == [0.2] * 1536
+        chunks_embeddings_2, token_count_2 = results[2]
+        assert len(chunks_embeddings_2) == 1
+        assert chunks_embeddings_2[0][1] == [0.2] * 1536
+        assert isinstance(token_count_2, int)
 
     async def test_process_comments_batch_empty_list(self, mocker):
         """Batch processing handles empty list."""
