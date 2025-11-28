@@ -87,11 +87,30 @@ class GetStatisticsInput(BaseModel):
 
 # RAG graph models
 class QueryGeneration(BaseModel):
-    """Query and filter generation for RAG search."""
+    """
+    Dual query and filter generation for hybrid RAG search.
 
-    query: str = Field(
-        description="The search query text to use for vector similarity search"
+    Generates two separate queries optimized for different search backends:
+    - semantic_query: Verbose, contextual query for vector/embedding search
+    - keyword_query: Concise, precise query for full-text search (ts_rank_cd)
+    """
+
+    semantic_query: str = Field(
+        description=(
+            "Verbose query (8-15 words) for vector/embedding similarity search. "
+            "Use complete phrases that capture the full meaning and intent. "
+            "Include related concepts, synonyms, and contextual language."
+        )
     )
+
+    keyword_query: str = Field(
+        description=(
+            "Concise query (2-5 terms) for PostgreSQL full-text search. "
+            "Use EXACT terms from the document's keyword_phrases when relevant. "
+            "These terms are ANDed together, so fewer precise terms = better recall."
+        )
+    )
+
     sentiment_filter: Optional[Sentiment] = Field(
         default=None,
         description="Optional filter for specific sentiment"
@@ -109,7 +128,7 @@ class QueryGeneration(BaseModel):
         description="When using topics_filter: 'any' means has any topic, 'all' means has all topics"
     )
     reasoning: str = Field(
-        description="Brief explanation of why this query and these filters were chosen"
+        description="Brief explanation of why these queries and filters were chosen"
     )
 
 
@@ -153,10 +172,18 @@ class RAGState(TypedDict, total=False):
     document_id: str
     messages: Annotated[Sequence[BaseMessage], add]
 
+    # Document context (cached after first fetch)
+    aggregated_keywords: Optional[dict]  # {"keywords_phrases": [...], "entities": [...]}
+
     # Optional fields (total=False allows these to be missing)
     filters: dict
     topic_filter_mode: str
-    current_query: str
+
+    # Current search parameters - dual queries for hybrid search
+    current_semantic_query: str  # Verbose query for vector search
+    current_keyword_query: str   # Concise query for FTS
+    current_query: str  # Deprecated: kept for backward compatibility
+
     search_results: List[dict]
     all_retrieved_chunks: dict  # comment_id -> chunks
     final_snippets: List[RAGSnippet]

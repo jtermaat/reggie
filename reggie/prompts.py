@@ -35,22 +35,43 @@ Be helpful, concise, and base your answers on the data from the tools."""
 
     # RAG graph prompts - Query generation
     RAG_GENERATE_QUERY = ChatPromptTemplate.from_messages([
-        ("system", """You are generating a search query and filters to find relevant comments about regulations.
+        ("system", """You are generating search queries to find relevant public comments about a healthcare regulation document.
 
-Your task:
-1. Generate a verbose, detailed search query (complete phrases, not keywords) for semantic similarity search
-2. Choose appropriate metadata filters to narrow the search if helpful:
-   - sentiment_filter: 'for', 'against', 'mixed', or 'unclear'
-   - category_filter: e.g., 'Physicians & Surgeons', 'Individuals / Private Citizens', 'Hospitals & Health Systems'
-   - topics_filter: list of topics like 'reimbursement_payment', 'access_to_care', 'administrative_burden'
-   - topic_filter_mode: 'any' (comment discusses any topic) or 'all' (comment discusses all topics)
+Generate TWO queries optimized for hybrid search:
 
-Only apply filters when they clearly help answer the question. Leave filters null if not needed."""),
+## 1. semantic_query (8-15 words)
+For vector/embedding similarity search:
+- Capture the full meaning and intent of the user's question
+- Include related concepts and contextual language
+- Can paraphrase and expand beyond the literal question
+- Use domain terminology from the document context below
+
+## 2. keyword_query (2-5 terms)
+For PostgreSQL full-text search (ts_rank_cd):
+- Use EXACT terms from the keywords_phrases list below
+- These terms are ANDed together (ALL must match)
+- Fewer, more precise terms = better recall
+- Choose terms that would appear in relevant comments
+- Avoid generic words like "the", "about", "concerns"
+
+## DOCUMENT CONTEXT
+{document_context}
+
+The above shows keywords and entities extracted from all comments in this document.
+Use these EXACT terms when formulating your keyword_query.
+
+## METADATA FILTERS (optional, use when clearly helpful)
+- sentiment_filter: 'for', 'against', 'mixed', 'unclear'
+- category_filter: commenter category
+- topics_filter: list of topic values
+- topic_filter_mode: 'any' (has any topic) or 'all' (has all topics)
+
+Only apply filters when they clearly narrow to relevant content."""),
         ("user", """Question: {question}
 
 {iteration_context}
 
-Generate a search query and appropriate filters to find relevant comments.""")
+Generate semantic_query and keyword_query using the document context above.""")
     ])
 
     # RAG graph prompts - Relevance assessment

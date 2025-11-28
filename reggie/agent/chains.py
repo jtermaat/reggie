@@ -196,21 +196,44 @@ def create_hybrid_search_chain(
         topic_filter_mode: 'any' or 'all' for topic filtering
 
     Returns:
-        Runnable that takes query text and returns fused search results
+        Runnable that accepts dict with 'semantic_query' and 'keyword_query'
+        or string (backward compat)
     """
+    from typing import Union
+
     embedding_chain = create_embedding_chain()
 
-    async def search_impl(query: str) -> List[CommentChunkSearchResult]:
-        """Search for similar comments using hybrid vector + FTS."""
-        # Generate embedding for query
-        embedding = await embedding_chain.ainvoke(query)
+    async def search_impl(
+        query_input: Union[str, Dict[str, str]]
+    ) -> List[CommentChunkSearchResult]:
+        """
+        Execute hybrid search with separate queries for each backend.
 
-        # Search using hybrid repository method
+        Args:
+            query_input: Either a string (backward compat) or dict with:
+                - semantic_query: Query for vector embedding
+                - keyword_query: Query for full-text search
+
+        Returns:
+            List of search results ranked by RRF fusion
+        """
+        # Handle both string and dict input for backward compatibility
+        if isinstance(query_input, str):
+            semantic_query = query_input
+            keyword_query = query_input
+        else:
+            semantic_query = query_input.get("semantic_query", "")
+            keyword_query = query_input.get("keyword_query", semantic_query)
+
+        # Generate embedding from semantic query
+        embedding = await embedding_chain.ainvoke(semantic_query)
+
+        # Execute hybrid search with separate queries
         async with UnitOfWork() as uow:
             results = await uow.chunks.search_hybrid(
                 document_id=document_id,
                 query_embedding=embedding,
-                query_text=query,
+                query_text=keyword_query,  # Use keyword query for FTS
                 limit=limit,
                 vector_weight=vector_weight,
                 fts_weight=fts_weight,
@@ -218,7 +241,7 @@ def create_hybrid_search_chain(
                 sentiment_filter=sentiment_filter,
                 category_filter=category_filter,
                 topics_filter=topics_filter,
-                topic_filter_mode=topic_filter_mode
+                topic_filter_mode=topic_filter_mode,
             )
 
         return results

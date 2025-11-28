@@ -29,6 +29,37 @@ from .status import emit_status
 logger = logging.getLogger(__name__)
 
 
+def format_document_context(aggregated_keywords: dict) -> str:
+    """
+    Format aggregated keywords for the query generation prompt.
+
+    Args:
+        aggregated_keywords: Dict with keywords_phrases and entities lists
+
+    Returns:
+        Formatted string for prompt context
+    """
+    lines = []
+
+    keywords = aggregated_keywords.get("keywords_phrases", [])
+    entities = aggregated_keywords.get("entities", [])
+
+    if keywords:
+        lines.append("### Keywords/Phrases Available")
+        lines.append("Use these exact terms for keyword_query:")
+        lines.append(", ".join(keywords[:50]))  # Limit for prompt size
+        lines.append("")
+
+    if entities:
+        lines.append("### Entities Mentioned")
+        lines.append(", ".join(entities[:30]))  # Limit for prompt size
+
+    if not lines:
+        return "No keywords available for this document."
+
+    return "\n".join(lines)
+
+
 @lru_cache(maxsize=1)
 def create_rag_graph() -> StateGraph:
     """Create and compile the RAG sub-agent graph (cached).
@@ -45,8 +76,23 @@ def create_rag_graph() -> StateGraph:
     selection_chain = create_comment_selection_chain()
 
     async def generate_query(state: RAGState) -> Dict[str, Any]:
-        """Generate search query and filters using LLM."""
-        logger.debug("Generating search query and filters")
+        """
+        Generate dual search queries using document context.
+
+        This node:
+        1. Fetches aggregated_keywords from documents table (or uses cached)
+        2. Formats keywords as context for the LLM
+        3. Calls the query generation chain
+        4. Returns both semantic and keyword queries
+
+        Args:
+            state: Current RAG state
+
+        Returns:
+            Updated state with queries and cached keywords
+        """
+        document_id = state["document_id"]
+        logger.debug(f"Generating queries for document {document_id}")
 
         # Get the user's question from messages
         user_messages = [m for m in state["messages"] if isinstance(m, HumanMessage)]
@@ -62,37 +108,88 @@ def create_rag_graph() -> StateGraph:
             iteration_context = "This is the first search iteration."
         else:
             all_retrieved = state.get("all_retrieved_chunks", {})
-            iteration_context = f"Previous search found {len(all_retrieved)} comments. Generate a different query and/or filters to find additional relevant information."
+            comment_count = len(all_retrieved)
+            iteration_context = (
+                f"Previous searches found {comment_count} comments. "
+                "Generate DIFFERENT queries to find additional relevant content. "
+                "Try varying the keyword_query terms or using different filters."
+            )
 
-        # Use LLM to generate query and filters
+        # Fetch aggregated keywords (use cached if available)
+        aggregated_keywords = state.get("aggregated_keywords")
+        if not aggregated_keywords:
+            async with UnitOfWork() as uow:
+                aggregated_keywords = await uow.documents.get_aggregated_keywords(document_id)
+
+            if not aggregated_keywords:
+                logger.warning(f"No keywords found for document {document_id}, using empty context")
+                document_context = "No keywords available for this document."
+            else:
+                document_context = format_document_context(aggregated_keywords)
+        else:
+            document_context = format_document_context(aggregated_keywords)
+
+        # Use LLM to generate dual queries and filters
         query_gen = await query_generation_chain.ainvoke({
             "question": question,
-            "iteration_context": iteration_context
+            "iteration_context": iteration_context,
+            "document_context": document_context,
         })
 
-        logger.debug(f"Generated query: {query_gen.query}")
-        logger.debug(f"Filters: sentiment={query_gen.sentiment_filter}, category={query_gen.category_filter}, topics={query_gen.topics_filter}")
+        logger.info(f"Generated semantic_query: {query_gen.semantic_query}")
+        logger.info(f"Generated keyword_query: {query_gen.keyword_query}")
+        logger.debug(f"Query reasoning: {query_gen.reasoning}")
 
         # Build filters dict from generated values
         filters = {}
         if query_gen.sentiment_filter:
-            filters["sentiment"] = query_gen.sentiment_filter
+            filters["sentiment"] = query_gen.sentiment_filter.value
         if query_gen.category_filter:
-            filters["category"] = query_gen.category_filter
+            filters["category"] = query_gen.category_filter.value
         if query_gen.topics_filter:
-            filters["topics"] = query_gen.topics_filter
+            filters["topics"] = [t.value for t in query_gen.topics_filter]
 
         return {
-            "current_query": query_gen.query,
+            "aggregated_keywords": aggregated_keywords,  # Cache for subsequent iterations
+            "current_semantic_query": query_gen.semantic_query,
+            "current_keyword_query": query_gen.keyword_query,
             "filters": filters,
             "topic_filter_mode": query_gen.topic_filter_mode,
-            "messages": [AIMessage(content=f"Searching for: {query_gen.query} (reasoning: {query_gen.reasoning})")]
+            "messages": [
+                AIMessage(content=(
+                    f"Searching with:\n"
+                    f"  semantic: '{query_gen.semantic_query}'\n"
+                    f"  keywords: '{query_gen.keyword_query}'\n"
+                    f"  reasoning: {query_gen.reasoning}"
+                ))
+            ],
         }
 
     async def search_vectors(state: RAGState) -> Dict[str, Any]:
-        """Search for relevant comment chunks using vector similarity or hybrid search."""
-        current_query = state.get("current_query", "")
-        logger.debug(f"Searching with query: {current_query}")
+        """
+        Search for relevant comment chunks using the generated queries.
+
+        In hybrid mode, passes separate queries:
+        - semantic_query → embedded for vector search
+        - keyword_query → used for ts_rank_cd full-text search
+
+        Args:
+            state: Current RAG state with queries
+
+        Returns:
+            Updated state with search results
+        """
+        document_id = state["document_id"]
+        semantic_query = state.get("current_semantic_query", "")
+        keyword_query = state.get("current_keyword_query", "")
+
+        # Backward compatibility fallback
+        if not semantic_query and not keyword_query:
+            fallback_query = state.get("current_query", "")
+            semantic_query = fallback_query
+            keyword_query = fallback_query
+
+        logger.debug(f"Searching with semantic='{semantic_query}', keywords='{keyword_query}'")
 
         # Create search chain with current state parameters
         config = get_config()
@@ -101,7 +198,7 @@ def create_rag_graph() -> StateGraph:
         # Choose search mode based on configuration
         if config.search_mode == "hybrid":
             search_chain = create_hybrid_search_chain(
-                document_id=state["document_id"],
+                document_id=document_id,
                 limit=config.vector_search_limit,
                 vector_weight=config.hybrid_vector_weight,
                 fts_weight=config.hybrid_fts_weight,
@@ -112,10 +209,16 @@ def create_rag_graph() -> StateGraph:
                 topic_filter_mode=state.get("topic_filter_mode", "any")
             )
             search_mode_label = "hybrid"
+
+            # Pass both queries as dict
+            query_input = {
+                "semantic_query": semantic_query,
+                "keyword_query": keyword_query,
+            }
         else:
             # Default to vector-only search
             search_chain = create_vector_search_chain(
-                document_id=state["document_id"],
+                document_id=document_id,
                 limit=config.vector_search_limit,
                 sentiment_filter=filters.get("sentiment"),
                 category_filter=filters.get("category"),
@@ -123,6 +226,8 @@ def create_rag_graph() -> StateGraph:
                 topic_filter_mode=state.get("topic_filter_mode", "any")
             )
             search_mode_label = "vector"
+            # Vector-only uses semantic query
+            query_input = semantic_query
 
         # Emit status with filter info if present
         filter_parts = []
@@ -139,14 +244,14 @@ def create_rag_graph() -> StateGraph:
             emit_status(f"querying comment text ({search_mode_label})")
 
         # Use LCEL chain to search
-        results = await search_chain.ainvoke(current_query)
+        results = await search_chain.ainvoke(query_input)
 
-        logger.debug(f"Found {len(results)} chunks")
+        logger.info(f"Search returned {len(results)} chunks")
 
         iteration_count = state.get("iteration_count", 0)
         if not results and iteration_count == 0:
-            logger.warning(f"No comment chunks found for query: {current_query}")
-            raise RAGSearchError(f"No comment chunks found for query: {current_query}")
+            logger.warning(f"No comment chunks found for query")
+            raise RAGSearchError(f"No comment chunks found for query")
 
         # Organize by comment_id
         all_retrieved = state.get("all_retrieved_chunks", {})
@@ -356,9 +461,12 @@ async def run_rag_search(
     initial_state: RAGState = {
         "document_id": document_id,
         "messages": [HumanMessage(content=question)],
+        "aggregated_keywords": None,  # Will be fetched on first generate_query
         "filters": {},
         "topic_filter_mode": "any",
-        "current_query": "",
+        "current_semantic_query": "",
+        "current_keyword_query": "",
+        "current_query": "",  # Deprecated but kept for backward compatibility
         "search_results": [],
         "all_retrieved_chunks": {},
         "final_snippets": [],
