@@ -183,12 +183,6 @@ def create_rag_graph() -> StateGraph:
         semantic_query = state.get("current_semantic_query", "")
         keyword_query = state.get("current_keyword_query", "")
 
-        # Backward compatibility fallback
-        if not semantic_query and not keyword_query:
-            fallback_query = state.get("current_query", "")
-            semantic_query = fallback_query
-            keyword_query = fallback_query
-
         logger.debug(f"Searching with semantic='{semantic_query}', keywords='{keyword_query}'")
 
         # Create search chain with current state parameters
@@ -466,7 +460,6 @@ async def run_rag_search(
         "topic_filter_mode": "any",
         "current_semantic_query": "",
         "current_keyword_query": "",
-        "current_query": "",  # Deprecated but kept for backward compatibility
         "search_results": [],
         "all_retrieved_chunks": {},
         "final_snippets": [],

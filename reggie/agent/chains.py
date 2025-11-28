@@ -197,33 +197,25 @@ def create_hybrid_search_chain(
 
     Returns:
         Runnable that accepts dict with 'semantic_query' and 'keyword_query'
-        or string (backward compat)
     """
-    from typing import Union
-
     embedding_chain = create_embedding_chain()
 
     async def search_impl(
-        query_input: Union[str, Dict[str, str]]
+        query_input: Dict[str, str]
     ) -> List[CommentChunkSearchResult]:
         """
         Execute hybrid search with separate queries for each backend.
 
         Args:
-            query_input: Either a string (backward compat) or dict with:
+            query_input: Dict with:
                 - semantic_query: Query for vector embedding
                 - keyword_query: Query for full-text search
 
         Returns:
             List of search results ranked by RRF fusion
         """
-        # Handle both string and dict input for backward compatibility
-        if isinstance(query_input, str):
-            semantic_query = query_input
-            keyword_query = query_input
-        else:
-            semantic_query = query_input.get("semantic_query", "")
-            keyword_query = query_input.get("keyword_query", semantic_query)
+        semantic_query = query_input.get("semantic_query", "")
+        keyword_query = query_input.get("keyword_query", semantic_query)
 
         # Generate embedding from semantic query
         embedding = await embedding_chain.ainvoke(semantic_query)

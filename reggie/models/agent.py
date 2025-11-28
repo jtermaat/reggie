@@ -182,7 +182,6 @@ class RAGState(TypedDict, total=False):
     # Current search parameters - dual queries for hybrid search
     current_semantic_query: str  # Verbose query for vector search
     current_keyword_query: str   # Concise query for FTS
-    current_query: str  # Deprecated: kept for backward compatibility
 
     search_results: List[dict]
     all_retrieved_chunks: dict  # comment_id -> chunks
