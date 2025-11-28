@@ -55,8 +55,30 @@ async def _init_db_schema(conn: psycopg.AsyncConnection) -> None:
     await conn.commit()
 
 
+async def _run_migrations(conn: psycopg.AsyncConnection) -> None:
+    """Run database migrations.
+
+    Args:
+        conn: PostgreSQL async connection
+    """
+    migrations_dir = Path(__file__).parent / "sql" / "migrations"
+    if not migrations_dir.exists():
+        return
+
+    # Get all migration files sorted by name
+    migration_files = sorted(migrations_dir.glob("*.sql"))
+
+    for migration_file in migration_files:
+        with open(migration_file, "r") as f:
+            migration_sql = f.read()
+
+        async with conn.cursor() as cur:
+            await cur.execute(migration_sql)
+        await conn.commit()
+
+
 async def init_db(database_url: str = None) -> None:
-    """Initialize the database schema.
+    """Initialize the database schema and run migrations.
 
     Args:
         database_url: PostgreSQL connection URL. If None, will be read from config.
@@ -74,5 +96,8 @@ async def init_db(database_url: str = None) -> None:
         async with conn.cursor() as cur:
             await cur.execute(schema_sql)
         await conn.commit()
+
+        # Run migrations for existing databases
+        await _run_migrations(conn)
 
     print(f"Database initialized successfully at {database_url}")

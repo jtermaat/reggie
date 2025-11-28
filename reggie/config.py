@@ -51,6 +51,12 @@ class ReggieConfig(BaseSettings):
     chunk_preview_chars: int = Field(default=200)
     comment_preview_chars: int = Field(default=500)
 
+    # Hybrid Search
+    search_mode: str = Field(default="hybrid")  # "vector", "fts", or "hybrid"
+    hybrid_vector_weight: float = Field(default=0.7)
+    hybrid_fts_weight: float = Field(default=0.3)
+    hybrid_rrf_k: int = Field(default=60)
+
     # LangSmith
     langsmith_enabled: bool = Field(default=False)
     langsmith_project: str = Field(default="reggie-agent-eval")

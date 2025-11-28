@@ -166,3 +166,63 @@ def create_vector_search_chain(
     return RunnableLambda(search_impl).with_config(
         {"run_name": f"search_comments_{document_id}"}
     )
+
+
+def create_hybrid_search_chain(
+    document_id: str,
+    limit: int = 10,
+    vector_weight: float = 0.5,
+    fts_weight: float = 0.5,
+    rrf_k: int = 60,
+    sentiment_filter: str = None,
+    category_filter: str = None,
+    topics_filter: List[str] = None,
+    topic_filter_mode: str = "any"
+) -> Runnable:
+    """Create hybrid search chain combining vector and full-text search.
+
+    Uses Reciprocal Rank Fusion (RRF) to combine rankings from both
+    vector similarity search (pgvector) and full-text search (tsvector).
+
+    Args:
+        document_id: Document to search within
+        limit: Maximum number of results
+        vector_weight: Weight for vector search (0-1)
+        fts_weight: Weight for full-text search (0-1)
+        rrf_k: RRF constant for rank decay
+        sentiment_filter: Optional sentiment filter
+        category_filter: Optional category filter
+        topics_filter: Optional topics filter
+        topic_filter_mode: 'any' or 'all' for topic filtering
+
+    Returns:
+        Runnable that takes query text and returns fused search results
+    """
+    embedding_chain = create_embedding_chain()
+
+    async def search_impl(query: str) -> List[CommentChunkSearchResult]:
+        """Search for similar comments using hybrid vector + FTS."""
+        # Generate embedding for query
+        embedding = await embedding_chain.ainvoke(query)
+
+        # Search using hybrid repository method
+        async with UnitOfWork() as uow:
+            results = await uow.chunks.search_hybrid(
+                document_id=document_id,
+                query_embedding=embedding,
+                query_text=query,
+                limit=limit,
+                vector_weight=vector_weight,
+                fts_weight=fts_weight,
+                rrf_k=rrf_k,
+                sentiment_filter=sentiment_filter,
+                category_filter=category_filter,
+                topics_filter=topics_filter,
+                topic_filter_mode=topic_filter_mode
+            )
+
+        return results
+
+    return RunnableLambda(search_impl).with_config(
+        {"run_name": f"hybrid_search_{document_id}"}
+    )

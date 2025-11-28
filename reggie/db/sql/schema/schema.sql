@@ -54,10 +54,30 @@ CREATE TABLE IF NOT EXISTS comment_chunks (
     chunk_text TEXT NOT NULL,
     chunk_index INTEGER NOT NULL,
     embedding vector(1536),
+    chunk_text_tsv tsvector,  -- Pre-computed full-text search vector
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
 CREATE INDEX IF NOT EXISTS idx_comment_chunks_comment_id ON comment_chunks(comment_id);
+
+-- GIN index for full-text search
+CREATE INDEX IF NOT EXISTS idx_comment_chunks_fts ON comment_chunks USING GIN(chunk_text_tsv);
+
+-- Trigger function to auto-update tsvector on insert/update
+CREATE OR REPLACE FUNCTION update_chunk_text_tsv()
+RETURNS TRIGGER AS $$
+BEGIN
+    NEW.chunk_text_tsv := to_tsvector('english', COALESCE(NEW.chunk_text, ''));
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+-- Trigger to populate tsvector automatically
+DROP TRIGGER IF EXISTS chunk_text_tsv_update ON comment_chunks;
+CREATE TRIGGER chunk_text_tsv_update
+    BEFORE INSERT OR UPDATE OF chunk_text ON comment_chunks
+    FOR EACH ROW
+    EXECUTE FUNCTION update_chunk_text_tsv();
 
 -- IVFFlat index for vector similarity search (cosine distance)
 -- Note: This index is created after data is loaded for better performance

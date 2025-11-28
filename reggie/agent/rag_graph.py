@@ -19,6 +19,7 @@ from ..db.unit_of_work import UnitOfWork
 from ..exceptions import RAGSearchError
 from .chains import (
     create_vector_search_chain,
+    create_hybrid_search_chain,
     create_query_generation_chain,
     create_relevance_assessment_chain,
     create_comment_selection_chain
@@ -89,21 +90,39 @@ def create_rag_graph() -> StateGraph:
         }
 
     async def search_vectors(state: RAGState) -> Dict[str, Any]:
-        """Search for relevant comment chunks using vector similarity."""
+        """Search for relevant comment chunks using vector similarity or hybrid search."""
         current_query = state.get("current_query", "")
-        logger.debug(f"Searching vectors with query: {current_query}")
+        logger.debug(f"Searching with query: {current_query}")
 
         # Create search chain with current state parameters
         config = get_config()
         filters = state.get("filters", {})
-        search_chain = create_vector_search_chain(
-            document_id=state["document_id"],
-            limit=config.vector_search_limit,
-            sentiment_filter=filters.get("sentiment"),
-            category_filter=filters.get("category"),
-            topics_filter=filters.get("topics"),
-            topic_filter_mode=state.get("topic_filter_mode", "any")
-        )
+
+        # Choose search mode based on configuration
+        if config.search_mode == "hybrid":
+            search_chain = create_hybrid_search_chain(
+                document_id=state["document_id"],
+                limit=config.vector_search_limit,
+                vector_weight=config.hybrid_vector_weight,
+                fts_weight=config.hybrid_fts_weight,
+                rrf_k=config.hybrid_rrf_k,
+                sentiment_filter=filters.get("sentiment"),
+                category_filter=filters.get("category"),
+                topics_filter=filters.get("topics"),
+                topic_filter_mode=state.get("topic_filter_mode", "any")
+            )
+            search_mode_label = "hybrid"
+        else:
+            # Default to vector-only search
+            search_chain = create_vector_search_chain(
+                document_id=state["document_id"],
+                limit=config.vector_search_limit,
+                sentiment_filter=filters.get("sentiment"),
+                category_filter=filters.get("category"),
+                topics_filter=filters.get("topics"),
+                topic_filter_mode=state.get("topic_filter_mode", "any")
+            )
+            search_mode_label = "vector"
 
         # Emit status with filter info if present
         filter_parts = []
@@ -115,9 +134,9 @@ def create_rag_graph() -> StateGraph:
             filter_parts.append(f"topics={filters['topics']}")
 
         if filter_parts:
-            emit_status(f"querying comment text (filtered on {', '.join(filter_parts)})")
+            emit_status(f"querying comment text ({search_mode_label}, filtered on {', '.join(filter_parts)})")
         else:
-            emit_status("querying comment text")
+            emit_status(f"querying comment text ({search_mode_label})")
 
         # Use LCEL chain to search
         results = await search_chain.ainvoke(current_query)
