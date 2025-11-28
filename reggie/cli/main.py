@@ -470,42 +470,44 @@ def discuss(document_id: str, trace: bool, verbose: bool, model: str):
             console.print(f"  - {var}")
         return
 
-    def _verify_document():
+    async def _verify_document():
         """Verify the document exists and has processed comments."""
         from ..db import get_connection
 
-        with get_connection() as conn:
+        async with get_connection() as conn:
             # Check document exists
-            cur = conn.execute(
-                "SELECT title FROM documents WHERE id = ?",
-                (document_id,)
-            )
-            doc = cur.fetchone()
+            async with conn.cursor() as cur:
+                await cur.execute(
+                    "SELECT title FROM documents WHERE id = %s",
+                    (document_id,)
+                )
+                doc = await cur.fetchone()
 
-            if not doc:
-                return None, "Document not found"
+                if not doc:
+                    return None, "Document not found"
 
-            # Check for processed comments (with embeddings)
-            cur = conn.execute(
-                """
-                SELECT COUNT(DISTINCT c.id)
-                FROM comments c
-                JOIN comment_chunks cc ON c.id = cc.comment_id
-                WHERE c.document_id = ?
-                """,
-                (document_id,)
-            )
-            count = cur.fetchone()[0]
+                # Check for processed comments (with embeddings)
+                await cur.execute(
+                    """
+                    SELECT COUNT(DISTINCT c.id)
+                    FROM comments c
+                    JOIN comment_chunks cc ON c.id = cc.comment_id
+                    WHERE c.document_id = %s
+                    """,
+                    (document_id,)
+                )
+                row = await cur.fetchone()
+                count = row['count']
 
-            if count == 0:
-                return doc[0], "no_comments"
+                if count == 0:
+                    return doc['title'], "no_comments"
 
-            return doc[0], count
+                return doc['title'], count
 
     async def _run_discussion():
         """Run the interactive discussion."""
         # Verify document
-        doc_title, status = _verify_document()
+        doc_title, status = await _verify_document()
 
         if doc_title is None:
             console.print(f"\n[red]Error: Document '{document_id}' not found.[/red]")
