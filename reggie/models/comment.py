@@ -242,6 +242,10 @@ class Comment(BaseModel):
     organization: Optional[str] = None
     posted_date: Optional[datetime] = None
     metadata: dict = Field(default_factory=dict)
+    keywords_entities: Optional[dict] = Field(
+        default=None,
+        description="Extracted keywords/phrases and entities from this comment"
+    )
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
 
@@ -300,6 +304,14 @@ class CommentClassification(BaseModel):
     )
     reasoning: str = Field(
         description="Brief explanation of the classification decisions"
+    )
+    keywords_phrases: List[str] = Field(
+        default_factory=list,
+        description="Domain-specific keywords and multi-word phrases extracted from this comment (e.g., 'Medicare reimbursement', 'RVU', 'conversion factor')"
+    )
+    entities: List[str] = Field(
+        default_factory=list,
+        description="Named entities extracted from this comment (organization names, regulation references, CPT/HCPCS codes, specific programs)"
     )
 
     @field_validator('doctor_specialization')

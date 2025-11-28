@@ -104,6 +104,8 @@ Your task is to classify each comment by:
 3. **Topics**: Identify all topics discussed in the comment (can be multiple)
 4. **Doctor Specialization** (CONDITIONAL): If category is "Physicians & Surgeons", specify their medical specialization
 5. **Licensed Professional Type** (CONDITIONAL): If category is "Other Licensed Clinicians", specify their professional type
+6. **Keywords & Phrases**: Extract domain-specific terms and phrases from this comment
+7. **Entities**: Extract named entities like organizations, regulations, codes, and programs mentioned
 
 Guidelines for Category:
 - Look for explicit mentions of profession, organization, or role
@@ -152,6 +154,22 @@ Guidelines for Licensed Professional Type (ONLY if category is "Other Licensed C
 
 IMPORTANT: doctor_specialization and licensed_professional_type should ONLY be populated when their respective
 category conditions are met. Otherwise, leave them as null/None.
+
+Guidelines for Keywords & Phrases (extract 3-10 terms):
+- Include acronyms and technical terms (RVU, CMS, MPFS, HCPCS, CPT, E/M, etc.)
+- Include multi-word domain phrases ("Medicare reimbursement", "conversion factor", "telehealth supervision")
+- Include stakeholder/role terms that appear in the text
+- Focus on terms useful for searching these comments
+- Avoid generic words like "concerns", "issues", "important", "regulation"
+- Quality over quantity - extract meaningful domain terminology
+
+Guidelines for Entities (extract named entities mentioned):
+- Organization names (medical associations, companies, agencies, hospitals)
+- Regulation/program names (MPFS, MIPS, QPP, specific proposed rules)
+- Code references (CPT codes, HCPCS codes, ICD codes if mentioned)
+- Specific named programs, policies, or initiatives
+- Only include entities explicitly mentioned in the comment text
+- Leave empty if no specific entities are mentioned
 
 Provide your classification along with brief reasoning.
 

@@ -189,3 +189,102 @@ class DocumentRepository:
             return documents
         except psycopg.Error as e:
             raise RepositoryError(f"Failed to list documents: {e}") from e
+
+    async def aggregate_keywords(self, document_id: str) -> dict:
+        """Aggregate keywords and entities from all comments for a document.
+
+        Collects all keywords_phrases and entities from the comments table,
+        normalizes them (lowercase), and deduplicates.
+
+        Args:
+            document_id: The document ID to aggregate keywords for
+
+        Returns:
+            Dictionary with deduplicated keywords_phrases and entities lists
+
+        Raises:
+            RepositoryError: If database operation fails
+        """
+        try:
+            async with self._conn.cursor() as cur:
+                await cur.execute(
+                    """
+                    SELECT keywords_entities
+                    FROM comments
+                    WHERE document_id = %s
+                    AND keywords_entities IS NOT NULL
+                    """,
+                    (document_id,)
+                )
+                rows = await cur.fetchall()
+
+            # Collect and deduplicate keywords and entities
+            all_keywords = set()
+            all_entities = set()
+
+            for row in rows:
+                ke = row["keywords_entities"]
+                if ke:
+                    # Add keywords (normalized to lowercase for deduplication)
+                    for kw in ke.get("keywords_phrases", []):
+                        if kw:
+                            all_keywords.add(kw.lower().strip())
+                    # Add entities (preserve case but deduplicate case-insensitively)
+                    for ent in ke.get("entities", []):
+                        if ent:
+                            all_entities.add(ent.strip())
+
+            return {
+                "keywords_phrases": sorted(list(all_keywords)),
+                "entities": sorted(list(all_entities)),
+            }
+        except psycopg.Error as e:
+            raise RepositoryError(f"Failed to aggregate keywords: {e}") from e
+
+    async def update_aggregated_keywords(self, document_id: str, aggregated: dict) -> None:
+        """Update the aggregated_keywords column on a document.
+
+        Args:
+            document_id: The document ID to update
+            aggregated: Dictionary with keywords_phrases and entities lists
+
+        Raises:
+            RepositoryError: If database operation fails
+        """
+        try:
+            async with self._conn.cursor() as cur:
+                await cur.execute(
+                    """
+                    UPDATE documents
+                    SET aggregated_keywords = %s, updated_at = CURRENT_TIMESTAMP
+                    WHERE id = %s
+                    """,
+                    (Json(aggregated), document_id)
+                )
+        except psycopg.Error as e:
+            raise RepositoryError(f"Failed to update aggregated keywords: {e}") from e
+
+    async def get_aggregated_keywords(self, document_id: str) -> dict:
+        """Get the aggregated keywords for a document.
+
+        Args:
+            document_id: The document ID
+
+        Returns:
+            Dictionary with keywords_phrases and entities lists, or empty dict if not found
+
+        Raises:
+            RepositoryError: If database operation fails
+        """
+        try:
+            async with self._conn.cursor() as cur:
+                await cur.execute(
+                    "SELECT aggregated_keywords FROM documents WHERE id = %s",
+                    (document_id,)
+                )
+                row = await cur.fetchone()
+                if row and row["aggregated_keywords"]:
+                    return row["aggregated_keywords"]
+                return {"keywords_phrases": [], "entities": []}
+        except psycopg.Error as e:
+            raise RepositoryError(f"Failed to get aggregated keywords: {e}") from e

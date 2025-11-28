@@ -12,6 +12,7 @@ CREATE TABLE IF NOT EXISTS documents (
     document_type VARCHAR(100),
     posted_date TIMESTAMP,
     metadata JSONB,
+    aggregated_keywords JSONB DEFAULT '{"keywords_phrases": [], "entities": []}',
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
@@ -30,6 +31,7 @@ CREATE TABLE IF NOT EXISTS comments (
     topics JSONB,
     doctor_specialization VARCHAR(255),
     licensed_professional_type VARCHAR(255),
+    keywords_entities JSONB DEFAULT '{"keywords_phrases": [], "entities": []}',
     first_name VARCHAR(255),
     last_name VARCHAR(255),
     organization TEXT,

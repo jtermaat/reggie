@@ -340,6 +340,8 @@ class DocumentStreamer:
                         topics=classification["topics"],
                         doctor_specialization=classification.get("doctor_specialization"),
                         licensed_professional_type=classification.get("licensed_professional_type"),
+                        keywords_phrases=classification.get("keywords_phrases"),
+                        entities=classification.get("entities"),
                     )
 
                     # Store comment chunks with embeddings
@@ -487,6 +489,9 @@ class DocumentStreamer:
                 if stats["skipped"] > 0:
                     logger.info(f"Skipped {stats['skipped']} comments that already existed")
 
+                # Aggregate keywords after all comments are processed
+                await self._aggregate_document_keywords(document_id, uow)
+
                 logger.info("All comments streamed successfully")
 
                 # Notify progress callback that streaming is complete
@@ -509,6 +514,26 @@ class DocumentStreamer:
             self._finalize_stats(document_id, stats)
 
         return stats
+
+    async def _aggregate_document_keywords(self, document_id: str, uow: UnitOfWork) -> None:
+        """Aggregate keywords from all comments and store on document.
+
+        Args:
+            document_id: Document ID to aggregate keywords for
+            uow: Unit of Work instance
+        """
+        try:
+            logger.info(f"Aggregating keywords for document {document_id}")
+            aggregated = await uow.documents.aggregate_keywords(document_id)
+            await uow.documents.update_aggregated_keywords(document_id, aggregated)
+            await uow.commit()
+            logger.info(
+                f"Aggregated {len(aggregated.get('keywords_phrases', []))} keywords "
+                f"and {len(aggregated.get('entities', []))} entities for document {document_id}"
+            )
+        except Exception as e:
+            logger.warning(f"Failed to aggregate keywords for document {document_id}: {e}")
+            # Don't fail the whole process if aggregation fails
 
     def _initialize_stats(self, document_id: str) -> dict:
         """Initialize streaming statistics.

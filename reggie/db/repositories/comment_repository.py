@@ -56,6 +56,8 @@ class CommentRepository:
         topics: Optional[List[str]] = None,
         doctor_specialization: Optional[str] = None,
         licensed_professional_type: Optional[str] = None,
+        keywords_phrases: Optional[List[str]] = None,
+        entities: Optional[List[str]] = None,
     ) -> None:
         """Store comment in database.
 
@@ -67,6 +69,8 @@ class CommentRepository:
             topics: Classified topics (optional)
             doctor_specialization: Doctor specialization (optional)
             licensed_professional_type: Licensed professional type (optional)
+            keywords_phrases: Extracted keywords and phrases (optional)
+            entities: Extracted named entities (optional)
 
         Raises:
             RepositoryError: If database operation fails
@@ -82,15 +86,21 @@ class CommentRepository:
                 except (ValueError, AttributeError):
                     posted_date = None
 
+            # Build keywords_entities JSONB structure
+            keywords_entities = {
+                "keywords_phrases": keywords_phrases or [],
+                "entities": entities or [],
+            }
+
             async with self._conn.cursor() as cur:
                 await cur.execute(
                     """
                     INSERT INTO comments (
                         id, document_id, comment_text, category, sentiment, topics,
-                        doctor_specialization, licensed_professional_type,
+                        doctor_specialization, licensed_professional_type, keywords_entities,
                         first_name, last_name, organization, posted_date, metadata
                     )
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                     ON CONFLICT (id) DO UPDATE SET
                         comment_text = EXCLUDED.comment_text,
                         category = COALESCE(EXCLUDED.category, comments.category),
@@ -98,6 +108,7 @@ class CommentRepository:
                         topics = COALESCE(EXCLUDED.topics, comments.topics),
                         doctor_specialization = COALESCE(EXCLUDED.doctor_specialization, comments.doctor_specialization),
                         licensed_professional_type = COALESCE(EXCLUDED.licensed_professional_type, comments.licensed_professional_type),
+                        keywords_entities = COALESCE(EXCLUDED.keywords_entities, comments.keywords_entities),
                         metadata = EXCLUDED.metadata,
                         updated_at = CURRENT_TIMESTAMP
                     """,
@@ -110,6 +121,7 @@ class CommentRepository:
                         Json(topics) if topics is not None else None,  # Wrap list for JSONB array conversion
                         doctor_specialization,
                         licensed_professional_type,
+                        Json(keywords_entities),
                         attrs.get("firstName"),
                         attrs.get("lastName"),
                         attrs.get("organization"),
@@ -128,6 +140,8 @@ class CommentRepository:
         topics: Optional[List[str]] = None,
         doctor_specialization: Optional[str] = None,
         licensed_professional_type: Optional[str] = None,
+        keywords_phrases: Optional[List[str]] = None,
+        entities: Optional[List[str]] = None,
     ) -> None:
         """Update comment with classification results.
 
@@ -138,21 +152,38 @@ class CommentRepository:
             topics: Classified topics (optional)
             doctor_specialization: Doctor specialization (optional)
             licensed_professional_type: Licensed professional type (optional)
+            keywords_phrases: Extracted keywords and phrases (optional)
+            entities: Extracted named entities (optional)
 
         Raises:
             RepositoryError: If database operation fails
         """
         try:
+            # Build keywords_entities JSONB structure
+            keywords_entities = {
+                "keywords_phrases": keywords_phrases or [],
+                "entities": entities or [],
+            }
+
             async with self._conn.cursor() as cur:
                 await cur.execute(
                     """
                     UPDATE comments
                     SET category = %s, sentiment = %s, topics = %s,
                         doctor_specialization = %s, licensed_professional_type = %s,
+                        keywords_entities = %s,
                         updated_at = CURRENT_TIMESTAMP
                     WHERE id = %s
                     """,
-                    (category, sentiment, Json(topics) if topics is not None else None, doctor_specialization, licensed_professional_type, comment_id)
+                    (
+                        category,
+                        sentiment,
+                        Json(topics) if topics is not None else None,
+                        doctor_specialization,
+                        licensed_professional_type,
+                        Json(keywords_entities),
+                        comment_id,
+                    )
                 )
         except psycopg.Error as e:
             raise RepositoryError(f"Failed to update comment classification: {e}") from e
