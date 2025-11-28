@@ -136,8 +136,8 @@ def create_rag_graph() -> StateGraph:
             "document_context": document_context,
         })
 
-        logger.info(f"Generated semantic_query: {query_gen.semantic_query}")
-        logger.info(f"Generated keyword_query: {query_gen.keyword_query}")
+        logger.debug(f"Generated semantic_query: {query_gen.semantic_query}")
+        logger.debug(f"Generated keyword_query: {query_gen.keyword_query}")
         logger.debug(f"Query reasoning: {query_gen.reasoning}")
 
         # Build filters dict from generated values
@@ -240,7 +240,7 @@ def create_rag_graph() -> StateGraph:
         # Use LCEL chain to search
         results = await search_chain.ainvoke(query_input)
 
-        logger.info(f"Search returned {len(results)} chunks")
+        logger.debug(f"Search returned {len(results)} chunks")
 
         iteration_count = state.get("iteration_count", 0)
         if not results and iteration_count == 0:
