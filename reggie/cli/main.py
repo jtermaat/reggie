@@ -20,8 +20,10 @@ from .cost_renderer import render_cost_report, render_session_cost_report
 from .progress import (
     LoadingProgressDisplay,
     ProcessingProgressDisplay,
+    ImportProgressDisplay,
     create_loading_progress_callback,
     create_processing_progress_callback,
+    create_import_progress_callback,
 )
 from .streaming_progress import (
     StreamingProgressDisplay,
@@ -291,6 +293,60 @@ def stream(document_id: str, trace: bool):
     except Exception as e:
         console.print(f"\n[red]Error:[/red] {e}")
         logging.exception("Error streaming document")
+        return
+
+
+@cli.command("import")
+@click.argument("csv_file", type=click.Path(exists=True, path_type=Path))
+def import_csv(csv_file: Path):
+    """Import comments from a regulations.gov CSV bulk download.
+
+    CSV_FILE: Path to the CSV file exported from regulations.gov
+
+    This command imports all comments from a CSV bulk download into the
+    database. Comments are stored but not processed (categorized/embedded).
+    Use 'reggie process <document_id>' afterward to process them.
+
+    This is much faster than 'reggie stream' for documents with many comments,
+    as it bypasses the API rate limiting (4 seconds per comment).
+
+    Example:
+        reggie import data/comments.csv
+    """
+    from ..pipeline.csv_importer import CSVImporter
+
+    try:
+        # Create progress display
+        display = ImportProgressDisplay(csv_file.name, console=console)
+
+        async def _import():
+            importer = CSVImporter(error_collector=display.error_collector)
+            callback = create_import_progress_callback(display)
+            stats = await importer.import_csv(csv_file, progress_callback=callback)
+            return stats
+
+        # Use context manager for log suppression and cleanup
+        with display:
+            display.start()
+            stats = asyncio.run(_import())
+            display.stop()
+
+        console.print("\n[bold green]✓[/bold green] Import completed!\n")
+        console.print("[bold]Statistics:[/bold]")
+        console.print(f"  • Document ID: {stats['document_id']}")
+        console.print(f"  • Comments imported: {stats['comments_imported']}")
+        console.print(f"  • Comments skipped: {stats['comments_skipped']}")
+        console.print(f"  • Errors: {stats['errors']}")
+        console.print(f"  • Duration: {stats['duration']:.1f}s")
+
+        console.print("\n[dim]Note: Comments are stored but not yet categorized or embedded.[/dim]")
+        console.print(f"[dim]Use 'reggie process {stats['document_id']}' to process them.[/dim]")
+
+    except FileNotFoundError:
+        console.print(f"\n[red]Error:[/red] File not found: {csv_file}")
+    except Exception as e:
+        console.print(f"\n[red]Error:[/red] {e}")
+        logging.exception("Error importing CSV")
         return
 
 

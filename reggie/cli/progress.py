@@ -352,3 +352,139 @@ def create_processing_progress_callback(
             )
 
     return callback
+
+
+class ImportProgressDisplay(ProgressDisplay):
+    """Progress display for CSV import operations.
+
+    Shows progress for importing comments from a CSV bulk download file.
+    """
+
+    def __init__(self, filename: str, console: Optional[Console] = None):
+        """Initialize the import progress display.
+
+        Args:
+            filename: Name of the CSV file being imported
+            console: Optional Rich console instance
+        """
+        super().__init__(console)
+        self.filename = filename
+        self.import_task_id: Optional[int] = None
+
+    def start(self) -> "ImportProgressDisplay":
+        """Start the progress display.
+
+        Returns:
+            Self for chaining
+        """
+        self.console.print(f"\n[bold]Importing from:[/bold] {self.filename}\n")
+
+        # Create progress with custom columns
+        self.progress = Progress(
+            SpinnerColumn(),
+            TextColumn("[progress.description]{task.description}"),
+            BarColumn(),
+            MofNCompleteColumn(),
+            TaskProgressColumn(),
+            TextColumn("•"),
+            TimeRemainingColumn(),
+            console=self.console,
+        )
+        self.progress.start()
+
+        # Add import task (indeterminate until we know total)
+        self.import_task_id = self.progress.add_task(
+            "[cyan]Reading CSV...",
+            total=None
+        )
+
+        return self
+
+    def init(self, total: int):
+        """Initialize the import progress bar with total count.
+
+        Args:
+            total: Total number of comments to import
+        """
+        if self.progress and self.import_task_id is not None:
+            self.progress.update(
+                self.import_task_id,
+                total=total,
+                description="[cyan]Importing comments"
+            )
+
+    def update(self, imported: int, skipped: int = 0):
+        """Update import progress.
+
+        Args:
+            imported: Number of comments imported so far
+            skipped: Number of comments skipped (already exist)
+        """
+        if self.progress and self.import_task_id is not None:
+            description = "Importing comments"
+            if skipped > 0:
+                description += f" [dim]({skipped} skipped)[/dim]"
+
+            self.progress.update(
+                self.import_task_id,
+                completed=imported + skipped,
+                description=f"[cyan]{description}"
+            )
+
+    def complete(self, comments_imported: int, comments_skipped: int, **kwargs):
+        """Mark import as complete.
+
+        Args:
+            comments_imported: Total number of comments imported
+            comments_skipped: Total number of comments skipped
+            **kwargs: Additional stats (ignored)
+        """
+        if self.progress and self.import_task_id is not None:
+            description = f"[green]✓[/green] Imported {comments_imported} comments"
+            if comments_skipped > 0:
+                description += f" [dim]({comments_skipped} skipped)[/dim]"
+
+            self.progress.update(
+                self.import_task_id,
+                description=description
+            )
+
+    def stop(self):
+        """Stop the progress display."""
+        if self.progress:
+            self.progress.stop()
+            self.progress = None
+
+
+def create_import_progress_callback(
+    display: ImportProgressDisplay,
+) -> Callable:
+    """Create a progress callback function for CSV import.
+
+    Args:
+        display: ImportProgressDisplay instance
+
+    Returns:
+        Callback function that can be passed to CSVImporter
+    """
+    def callback(event: str, **kwargs):
+        """Progress callback for import operations.
+
+        Args:
+            event: Event type ('init', 'update', 'complete')
+            **kwargs: Event-specific parameters
+        """
+        if event == "init":
+            display.init(total=kwargs.get("total", 0))
+        elif event == "update":
+            display.update(
+                imported=kwargs.get("imported", 0),
+                skipped=kwargs.get("skipped", 0)
+            )
+        elif event == "complete":
+            display.complete(
+                comments_imported=kwargs.get("comments_imported", 0),
+                comments_skipped=kwargs.get("comments_skipped", 0)
+            )
+
+    return callback
