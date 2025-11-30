@@ -140,8 +140,6 @@ class CommentRepository:
         topics: Optional[List[str]] = None,
         doctor_specialization: Optional[str] = None,
         licensed_professional_type: Optional[str] = None,
-        keywords_phrases: Optional[List[str]] = None,
-        entities: Optional[List[str]] = None,
     ) -> None:
         """Update comment with classification results.
 
@@ -152,26 +150,17 @@ class CommentRepository:
             topics: Classified topics (optional)
             doctor_specialization: Doctor specialization (optional)
             licensed_professional_type: Licensed professional type (optional)
-            keywords_phrases: Extracted keywords and phrases (optional)
-            entities: Extracted named entities (optional)
 
         Raises:
             RepositoryError: If database operation fails
         """
         try:
-            # Build keywords_entities JSONB structure
-            keywords_entities = {
-                "keywords_phrases": keywords_phrases or [],
-                "entities": entities or [],
-            }
-
             async with self._conn.cursor() as cur:
                 await cur.execute(
                     """
                     UPDATE comments
                     SET category = %s, sentiment = %s, topics = %s,
                         doctor_specialization = %s, licensed_professional_type = %s,
-                        keywords_entities = %s,
                         updated_at = CURRENT_TIMESTAMP
                     WHERE id = %s
                     """,
@@ -181,7 +170,6 @@ class CommentRepository:
                         Json(topics) if topics is not None else None,
                         doctor_specialization,
                         licensed_professional_type,
-                        Json(keywords_entities),
                         comment_id,
                     )
                 )

@@ -44,21 +44,14 @@ For vector/embedding similarity search:
 - Capture the full meaning and intent of the user's question
 - Include related concepts and contextual language
 - Can paraphrase and expand beyond the literal question
-- Use domain terminology from the document context below
+- Use healthcare and regulatory domain terminology
 
 ## 2. keyword_query (2-5 terms)
-For PostgreSQL full-text search (ts_rank_cd):
-- Use EXACT terms from the keywords_phrases list below
-- These terms are ANDed together (ALL must match)
-- Fewer, more precise terms = better recall
-- Choose terms that would appear in relevant comments
+For PostgreSQL full-text search:
+- Use specific, precise terms likely to appear in relevant comments
+- Include domain acronyms and technical terms (RVU, CMS, MPFS, CPT, etc.)
+- Fewer terms = better recall (terms are ANDed together)
 - Avoid generic words like "the", "about", "concerns"
-
-## DOCUMENT CONTEXT
-{document_context}
-
-The above shows keywords and entities extracted from all comments in this document.
-Use these EXACT terms when formulating your keyword_query.
 
 ## METADATA FILTERS (optional, use when clearly helpful)
 - sentiment_filter: 'for', 'against', 'mixed', 'unclear'
@@ -71,7 +64,7 @@ Only apply filters when they clearly narrow to relevant content."""),
 
 {iteration_context}
 
-Generate semantic_query and keyword_query using the document context above.""")
+Generate semantic_query and keyword_query based on the question.""")
     ])
 
     # RAG graph prompts - Relevance assessment
@@ -102,19 +95,6 @@ Retrieved comments:
 Which comment IDs contain relevant information?""")
     ])
 
-    # RAG graph prompts - Extract passages
-    RAG_EXTRACT_SNIPPET = ChatPromptTemplate.from_messages([
-        ("system", """Extract the relevant portion of a comment that helps answer the user's question.
-
-Provide complete passages with full context - include surrounding sentences to preserve meaning. Prefer longer, contextual passages over brief excerpts."""),
-        ("user", """Question: {question}
-
-Comment text:
-{full_text}
-
-Extract the passage from this comment that is relevant to answering the question.""")
-    ])
-
     # Pipeline prompts - Categorization
     CATEGORIZATION = PromptTemplate.from_template(
         """You are an expert at analyzing public comments on healthcare regulations.
@@ -125,8 +105,6 @@ Your task is to classify each comment by:
 3. **Topics**: Identify all topics discussed in the comment (can be multiple)
 4. **Doctor Specialization** (CONDITIONAL): If category is "Physicians & Surgeons", specify their medical specialization
 5. **Licensed Professional Type** (CONDITIONAL): If category is "Other Licensed Clinicians", specify their professional type
-6. **Keywords & Phrases**: Extract domain-specific terms and phrases from this comment
-7. **Entities**: Extract named entities like organizations, regulations, codes, and programs mentioned
 
 Guidelines for Category:
 - Look for explicit mentions of profession, organization, or role
@@ -175,22 +153,6 @@ Guidelines for Licensed Professional Type (ONLY if category is "Other Licensed C
 
 IMPORTANT: doctor_specialization and licensed_professional_type should ONLY be populated when their respective
 category conditions are met. Otherwise, leave them as null/None.
-
-Guidelines for Keywords & Phrases (extract 3-10 terms):
-- Include acronyms and technical terms (RVU, CMS, MPFS, HCPCS, CPT, E/M, etc.)
-- Include multi-word domain phrases ("Medicare reimbursement", "conversion factor", "telehealth supervision")
-- Include stakeholder/role terms that appear in the text
-- Focus on terms useful for searching these comments
-- Avoid generic words like "concerns", "issues", "important", "regulation"
-- Quality over quantity - extract meaningful domain terminology
-
-Guidelines for Entities (extract named entities mentioned):
-- Organization names (medical associations, companies, agencies, hospitals)
-- Regulation/program names (MPFS, MIPS, QPP, specific proposed rules)
-- Code references (CPT codes, HCPCS codes, ICD codes if mentioned)
-- Specific named programs, policies, or initiatives
-- Only include entities explicitly mentioned in the comment text
-- Leave empty if no specific entities are mentioned
 
 Provide your classification along with brief reasoning.
 

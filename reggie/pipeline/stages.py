@@ -65,8 +65,6 @@ class CategorizationStage(PipelineStage):
             "topics": [topic.value for topic in classification.topics],
             "doctor_specialization": classification.doctor_specialization.value if classification.doctor_specialization else None,
             "licensed_professional_type": classification.licensed_professional_type.value if classification.licensed_professional_type else None,
-            "keywords_phrases": classification.keywords_phrases,
-            "entities": classification.entities,
         }
 
         return comment_data, result
@@ -162,8 +160,6 @@ class BatchCategorizationStage(PipelineStage):
                 "topics": [topic.value for topic in classification.topics],
                 "doctor_specialization": classification.doctor_specialization.value if classification.doctor_specialization else None,
                 "licensed_professional_type": classification.licensed_professional_type.value if classification.licensed_professional_type else None,
-                "keywords_phrases": classification.keywords_phrases,
-                "entities": classification.entities,
             }
             results.append(result)
 

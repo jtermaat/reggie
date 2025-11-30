@@ -305,14 +305,6 @@ class CommentClassification(BaseModel):
     reasoning: str = Field(
         description="Brief explanation of the classification decisions"
     )
-    keywords_phrases: List[str] = Field(
-        default_factory=list,
-        description="Domain-specific keywords and multi-word phrases extracted from this comment (e.g., 'Medicare reimbursement', 'RVU', 'conversion factor')"
-    )
-    entities: List[str] = Field(
-        default_factory=list,
-        description="Named entities extracted from this comment (organization names, regulation references, CPT/HCPCS codes, specific programs)"
-    )
 
     @field_validator('doctor_specialization')
     @classmethod

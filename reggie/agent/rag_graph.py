@@ -11,7 +11,7 @@ from langsmith.run_helpers import get_current_run_tree
 
 from ..models.agent import (
     RAGState,
-    RAGSnippet,
+    RetrievedComment,
     HasEnoughInformation
 )
 from ..config import get_config
@@ -27,37 +27,6 @@ from .chains import (
 from .status import emit_status
 
 logger = logging.getLogger(__name__)
-
-
-def format_document_context(aggregated_keywords: dict) -> str:
-    """
-    Format aggregated keywords for the query generation prompt.
-
-    Args:
-        aggregated_keywords: Dict with keywords_phrases and entities lists
-
-    Returns:
-        Formatted string for prompt context
-    """
-    lines = []
-
-    keywords = aggregated_keywords.get("keywords_phrases", [])
-    entities = aggregated_keywords.get("entities", [])
-
-    if keywords:
-        lines.append("### Keywords/Phrases Available")
-        lines.append("Use these exact terms for keyword_query:")
-        lines.append(", ".join(keywords[:50]))  # Limit for prompt size
-        lines.append("")
-
-    if entities:
-        lines.append("### Entities Mentioned")
-        lines.append(", ".join(entities[:30]))  # Limit for prompt size
-
-    if not lines:
-        return "No keywords available for this document."
-
-    return "\n".join(lines)
 
 
 @lru_cache(maxsize=1)
@@ -77,11 +46,11 @@ def create_rag_graph() -> StateGraph:
 
     async def generate_query(state: RAGState) -> Dict[str, Any]:
         """
-        Generate dual search queries using document context.
+        Generate dual search queries for hybrid search.
 
         This node:
-        1. Fetches aggregated_keywords from documents table (or uses cached)
-        2. Formats keywords as context for the LLM
+        1. Extracts the user's question from messages
+        2. Builds iteration context for subsequent searches
         3. Calls the query generation chain
         4. Returns both semantic and keyword queries
 
@@ -89,7 +58,7 @@ def create_rag_graph() -> StateGraph:
             state: Current RAG state
 
         Returns:
-            Updated state with queries and cached keywords
+            Updated state with queries
         """
         document_id = state["document_id"]
         logger.debug(f"Generating queries for document {document_id}")
@@ -115,25 +84,10 @@ def create_rag_graph() -> StateGraph:
                 "Try varying the keyword_query terms or using different filters."
             )
 
-        # Fetch aggregated keywords (use cached if available)
-        aggregated_keywords = state.get("aggregated_keywords")
-        if not aggregated_keywords:
-            async with UnitOfWork() as uow:
-                aggregated_keywords = await uow.documents.get_aggregated_keywords(document_id)
-
-            if not aggregated_keywords:
-                logger.warning(f"No keywords found for document {document_id}, using empty context")
-                document_context = "No keywords available for this document."
-            else:
-                document_context = format_document_context(aggregated_keywords)
-        else:
-            document_context = format_document_context(aggregated_keywords)
-
         # Use LLM to generate dual queries and filters
         query_gen = await query_generation_chain.ainvoke({
             "question": question,
             "iteration_context": iteration_context,
-            "document_context": document_context,
         })
 
         logger.debug(f"Generated semantic_query: {query_gen.semantic_query}")
@@ -150,7 +104,6 @@ def create_rag_graph() -> StateGraph:
             filters["topics"] = [t.value for t in query_gen.topics_filter]
 
         return {
-            "aggregated_keywords": aggregated_keywords,  # Cache for subsequent iterations
             "current_semantic_query": query_gen.semantic_query,
             "current_keyword_query": query_gen.keyword_query,
             "filters": filters,
@@ -267,19 +220,17 @@ def create_rag_graph() -> StateGraph:
 
         emit_status("evaluating result completeness")
 
-        config = get_config()
-
         # Get user's question
         user_messages = [m for m in state["messages"] if isinstance(m, HumanMessage)]
         question = user_messages[-1].content
 
-        # Format the chunks we've seen so far
+        # Format the chunks we've seen so far - provide full text for accurate assessment
         all_retrieved = state.get("all_retrieved_chunks", {})
         chunks_summary = []
         for comment_id, chunks in all_retrieved.items():
             for chunk in chunks:
                 chunks_summary.append(
-                    f"Comment {comment_id} (chunk {chunk.chunk_index}): {chunk.chunk_text[:config.chunk_preview_chars]}..."
+                    f"Comment {comment_id} (chunk {chunk.chunk_index}): {chunk.chunk_text}"
                 )
 
         # Use LCEL chain for assessment
@@ -287,7 +238,7 @@ def create_rag_graph() -> StateGraph:
             "question": question,
             "chunk_count": len(chunks_summary),
             "comment_count": len(all_retrieved),
-            "chunks_summary": chr(10).join(chunks_summary[:config.chunks_summary_display_limit])
+            "chunks_summary": chr(10).join(chunks_summary)
         })
 
         logger.debug(f"Assessment: {assessment.has_enough_information.value}, reasoning: {assessment.reasoning}")
@@ -304,19 +255,17 @@ def create_rag_graph() -> StateGraph:
 
         emit_status("selecting relevant comments")
 
-        config = get_config()
-
         user_messages = [m for m in state["messages"] if isinstance(m, HumanMessage)]
         question = user_messages[-1].content
 
-        # Format all unique comments we've retrieved
+        # Format all unique comments we've retrieved - provide full text for accurate selection
         all_retrieved = state.get("all_retrieved_chunks", {})
         comment_summaries = []
         for comment_id, chunks in all_retrieved.items():
             # Combine chunks for this comment
             chunk_texts = [c.chunk_text for c in chunks]
             combined = " ... ".join(chunk_texts)
-            comment_summaries.append(f"Comment ID: {comment_id}\n{combined[:config.comment_preview_chars]}...")
+            comment_summaries.append(f"Comment ID: {comment_id}\n{combined}")
 
         # Use LCEL chain for selection
         selection = await selection_chain.ainvoke({
@@ -331,7 +280,7 @@ def create_rag_graph() -> StateGraph:
             "relevant_comment_ids": selection.relevant_comment_ids
         }
 
-    async def extract_snippets(state: RAGState) -> Dict[str, Any]:
+    async def retrieve_comments(state: RAGState) -> Dict[str, Any]:
         """Retrieve full text from each selected comment."""
         logger.debug("Retrieving full text from relevant comments")
 
@@ -343,7 +292,7 @@ def create_rag_graph() -> StateGraph:
             # Fallback to all retrieved chunks if no selection was made
             relevant_ids = list(state.get("all_retrieved_chunks", {}).keys())
 
-        snippets = []
+        comments = []
 
         async with UnitOfWork() as uow:
             for comment_id in relevant_ids:
@@ -354,21 +303,20 @@ def create_rag_graph() -> StateGraph:
                     logger.warning(f"No text found for comment {comment_id}")
                     continue
 
-                # Return full comment text instead of extracted snippet
-                snippets.append(RAGSnippet(
+                comments.append(RetrievedComment(
                     comment_id=comment_id,
-                    snippet=full_text
+                    text=full_text
                 ))
 
-        logger.debug(f"Retrieved {len(snippets)} complete comments")
+        logger.debug(f"Retrieved {len(comments)} complete comments")
 
-        if not snippets:
+        if not comments:
             logger.error("Failed to retrieve any comments")
             raise RAGSearchError("Failed to retrieve any comments")
 
         return {
-            "final_snippets": snippets,
-            "messages": [AIMessage(content=f"Retrieved {len(snippets)} complete comments")]
+            "retrieved_comments": comments,
+            "messages": [AIMessage(content=f"Retrieved {len(comments)} complete comments")]
         }
 
     def should_continue_searching(state: RAGState) -> Literal["search", "select"]:
@@ -397,7 +345,7 @@ def create_rag_graph() -> StateGraph:
     workflow.add_node("search", search_vectors)
     workflow.add_node("assess", assess_relevance)
     workflow.add_node("select", select_relevant_comments)
-    workflow.add_node("extract", extract_snippets)
+    workflow.add_node("extract", retrieve_comments)
 
     # Add edges
     workflow.set_entry_point("generate_query")
@@ -427,7 +375,7 @@ def create_rag_graph() -> StateGraph:
 async def run_rag_search(
     document_id: str,
     question: str
-) -> List[RAGSnippet]:
+) -> List[RetrievedComment]:
     """Run the RAG search graph to find relevant comments.
 
     The graph will autonomously generate queries and filters based on the question.
@@ -437,7 +385,7 @@ async def run_rag_search(
         question: The user's question
 
     Returns:
-        List of RAGSnippet objects containing complete comment text
+        List of RetrievedComment objects containing complete comment text
     """
     # Add metadata to LangSmith trace
     run_tree = get_current_run_tree()
@@ -455,14 +403,13 @@ async def run_rag_search(
     initial_state: RAGState = {
         "document_id": document_id,
         "messages": [HumanMessage(content=question)],
-        "aggregated_keywords": None,  # Will be fetched on first generate_query
         "filters": {},
         "topic_filter_mode": "any",
         "current_semantic_query": "",
         "current_keyword_query": "",
         "search_results": [],
         "all_retrieved_chunks": {},
-        "final_snippets": [],
+        "retrieved_comments": [],
         "relevant_comment_ids": [],
         "iteration_count": 0,
         "max_iterations": config.max_rag_iterations
@@ -482,8 +429,8 @@ async def run_rag_search(
     # Add result metadata
     if run_tree:
         run_tree.add_metadata({
-            "snippets_found": len(final_state["final_snippets"]),
+            "comments_found": len(final_state["retrieved_comments"]),
             "iterations_used": final_state.get("iteration_count", 0)
         })
 
-    return final_state["final_snippets"]
+    return final_state["retrieved_comments"]

@@ -108,9 +108,6 @@ class PipelineOrchestrator:
                     rows, batch_size, uow, stats, cost_tracker, progress_callback
                 )
 
-                # Aggregate keywords after all comments are processed
-                await self._aggregate_document_keywords(document_id, uow)
-
         except Exception as e:
             logger.error(f"Error processing comments: {e}")
             stats["errors"] += 1
@@ -293,8 +290,6 @@ class PipelineOrchestrator:
             classification["topics"],
             classification.get("doctor_specialization"),
             classification.get("licensed_professional_type"),
-            classification.get("keywords_phrases"),
-            classification.get("entities"),
         )
 
         await uow.chunks.store_comment_chunks(
@@ -317,26 +312,6 @@ class PipelineOrchestrator:
             f"Processed {min(current_idx + batch_size, total)}/{total} comments "
             f"({stats['chunks_created']} chunks total)"
         )
-
-    async def _aggregate_document_keywords(self, document_id: str, uow: UnitOfWork) -> None:
-        """Aggregate keywords from all comments and store on document.
-
-        Args:
-            document_id: Document ID to aggregate keywords for
-            uow: Unit of Work instance
-        """
-        try:
-            logger.info(f"Aggregating keywords for document {document_id}")
-            aggregated = await uow.documents.aggregate_keywords(document_id)
-            await uow.documents.update_aggregated_keywords(document_id, aggregated)
-            await uow.commit()
-            logger.info(
-                f"Aggregated {len(aggregated.get('keywords_phrases', []))} keywords "
-                f"and {len(aggregated.get('entities', []))} entities for document {document_id}"
-            )
-        except Exception as e:
-            logger.warning(f"Failed to aggregate keywords for document {document_id}: {e}")
-            # Don't fail the whole process if aggregation fails
 
     def _finalize_stats(self, document_id: str, stats: dict) -> None:
         """Finalize and log statistics.

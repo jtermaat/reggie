@@ -11,8 +11,7 @@ from ..models.agent import (
     CommentChunkSearchResult,
     QueryGeneration,
     RelevanceAssessment,
-    RelevantCommentSelection,
-    CommentSnippet
+    RelevantCommentSelection
 )
 from ..models import CommentClassification
 from ..config import get_config
@@ -102,23 +101,6 @@ def create_comment_selection_chain() -> Runnable:
         prompts.RAG_SELECT_COMMENTS
         | llm.with_structured_output(RelevantCommentSelection)
     ).with_config({"run_name": "select_comments"})
-
-
-def create_snippet_extraction_chain() -> Runnable:
-    """Create LCEL chain for extracting comment snippets.
-
-    Returns:
-        Runnable that takes dict with question, full_text
-        and returns CommentSnippet
-    """
-    config = get_config()
-    llm = ChatOpenAI(model=config.rag_model)
-
-    # LCEL chain: prompt | llm with structured output
-    return (
-        prompts.RAG_EXTRACT_SNIPPET
-        | llm.with_structured_output(CommentSnippet)
-    ).with_config({"run_name": "extract_snippet"})
 
 
 def create_vector_search_chain(

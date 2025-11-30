@@ -47,9 +47,6 @@ class ReggieConfig(BaseSettings):
     max_rag_iterations: int = Field(default=3)
     vector_search_limit: int = Field(default=10)
     min_comments_threshold: int = Field(default=3)
-    chunks_summary_display_limit: int = Field(default=20)
-    chunk_preview_chars: int = Field(default=200)
-    comment_preview_chars: int = Field(default=500)
 
     # Hybrid Search
     search_mode: str = Field(default="hybrid")  # "vector", "fts", or "hybrid"

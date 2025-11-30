@@ -31,11 +31,11 @@ class StatisticsResponse(BaseModel):
     breakdown: List[StatisticsBreakdownItem] = Field(description="Breakdown by requested dimension")
 
 
-class RAGSnippet(BaseModel):
-    """A snippet from a comment found by RAG search."""
+class RetrievedComment(BaseModel):
+    """A complete comment retrieved by RAG search."""
 
-    comment_id: str = Field(description="ID of the comment this snippet is from")
-    snippet: str = Field(description="The relevant text snippet")
+    comment_id: str = Field(description="ID of the comment")
+    text: str = Field(description="The full comment text")
 
 
 class CommentChunkSearchResult(BaseModel):
@@ -154,14 +154,6 @@ class RelevantCommentSelection(BaseModel):
     )
 
 
-class CommentSnippet(BaseModel):
-    """A snippet extracted from a comment."""
-
-    snippet: str = Field(
-        description="The exact text from the comment that is relevant to the question"
-    )
-
-
 class RAGState(TypedDict, total=False):
     """State for the RAG graph.
 
@@ -171,9 +163,6 @@ class RAGState(TypedDict, total=False):
     # Required fields
     document_id: str
     messages: Annotated[Sequence[BaseMessage], add]
-
-    # Document context (cached after first fetch)
-    aggregated_keywords: Optional[dict]  # {"keywords_phrases": [...], "entities": [...]}
 
     # Optional fields (total=False allows these to be missing)
     filters: dict
@@ -185,7 +174,7 @@ class RAGState(TypedDict, total=False):
 
     search_results: List[dict]
     all_retrieved_chunks: dict  # comment_id -> chunks
-    final_snippets: List[RAGSnippet]
+    retrieved_comments: List[RetrievedComment]
     relevant_comment_ids: List[str]
     iteration_count: int
     max_iterations: int

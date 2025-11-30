@@ -147,20 +147,20 @@ async def search_comments(
             "question_length": len(question)
         })
 
-    snippets = await run_rag_search(
+    comments = await run_rag_search(
         document_id=document_id,
         question=question
     )
 
-    if not snippets:
+    if not comments:
         raise RAGSearchError(f"No relevant comments found for question: {question}")
 
     # Format the results
-    output = [f"Found {len(snippets)} relevant comments:\n"]
+    output = [f"Found {len(comments)} relevant comments:\n"]
 
-    for i, snippet in enumerate(snippets, 1):
-        output.append(f"{i}. Comment ID: {snippet.comment_id}")
-        output.append(f"   {snippet.snippet}\n")
+    for i, comment in enumerate(comments, 1):
+        output.append(f"{i}. Comment ID: {comment.comment_id}")
+        output.append(f"   {comment.text}\n")
 
     return "\n".join(output)
 
