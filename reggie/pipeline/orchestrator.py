@@ -206,7 +206,8 @@ class PipelineOrchestrator:
                     progress_callback(
                         "update",
                         completed=stats["comments_processed"],
-                        chunks_created=stats["chunks_created"]
+                        chunks_created=stats["chunks_created"],
+                        cost_report=cost_tracker.get_report()
                     )
 
             except Exception as e:

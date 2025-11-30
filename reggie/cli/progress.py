@@ -19,6 +19,7 @@ from rich.progress import (
 from rich.console import Console
 
 from ..utils import ErrorCollector
+from ..models.cost import CostReport
 
 
 class ProgressDisplay:
@@ -238,17 +239,22 @@ class ProcessingProgressDisplay(ProgressDisplay):
 
         return self
 
-    def update(self, completed: int, chunks_created: int = 0):
+    def update(self, completed: int, chunks_created: int = 0, cost_report: Optional[CostReport] = None):
         """Update processing progress.
 
         Args:
             completed: Number of comments processed so far
             chunks_created: Total number of chunks created
+            cost_report: Current cost report for displaying running costs
         """
         if self.progress and self.processing_task_id is not None:
             description = "Processing comments"
             if chunks_created > 0:
                 description += f" [dim]({chunks_created} chunks)[/dim]"
+
+            if cost_report and cost_report.total_cost_usd > 0:
+                cost_str = f"${cost_report.total_cost_usd:.4f}"
+                description += f" [dim yellow]• Cost: {cost_str}[/dim yellow]"
 
             self.progress.update(
                 self.processing_task_id,
@@ -343,7 +349,8 @@ def create_processing_progress_callback(
         elif event == "update":
             display.update(
                 completed=kwargs.get("completed", 0),
-                chunks_created=kwargs.get("chunks_created", 0)
+                chunks_created=kwargs.get("chunks_created", 0),
+                cost_report=kwargs.get("cost_report")
             )
         elif event == "complete":
             display.complete(
