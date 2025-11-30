@@ -22,19 +22,19 @@ class CommentProcessor:
     def __init__(
         self,
         openai_api_key: Optional[str] = None,
-        connection_string: Optional[str] = None,
+        database_url: Optional[str] = None,
         error_collector: Optional[ErrorCollector] = None,
     ):
         """Initialize the comment processor.
 
         Args:
             openai_api_key: OpenAI API key
-            connection_string: PostgreSQL connection string
+            database_url: PostgreSQL database connection URL
             error_collector: Optional error collector for aggregating errors
         """
         self.orchestrator = PipelineOrchestrator.create(
             openai_api_key=openai_api_key,
-            connection_string=connection_string,
+            database_url=database_url,
             error_collector=error_collector,
         )
 

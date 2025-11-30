@@ -34,7 +34,7 @@ class ReggieConfig(BaseSettings):
 
     # Processing
     categorization_model: str = Field(default="gpt-5-nano")
-    default_batch_size: int = Field(default=10)
+    default_batch_size: int = Field(default=100)
     commit_every: int = Field(default=10)
     embedding_batch_size: int = Field(default=100)
     embedding_rate_limit_sleep: float = Field(default=1.0)

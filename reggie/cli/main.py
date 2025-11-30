@@ -116,8 +116,7 @@ def load(document_id: str):
 @click.argument("document_id")
 @click.option(
     "--batch-size",
-    default=10,
-    help="Number of comments to process in parallel (default: 10)",
+    help=f"Number of comments to process in parallel (default: {get_config().default_batch_size})",
 )
 @click.option(
     "--skip-processed",
@@ -129,7 +128,7 @@ def load(document_id: str):
     is_flag=True,
     help="Enable LangSmith tracing for debugging and evaluation",
 )
-def process(document_id: str, batch_size: int, skip_processed: bool, trace: bool):
+def process(document_id: str, batch_size: int | None, skip_processed: bool, trace: bool):
     """Process comments: categorize and embed.
 
     DOCUMENT_ID: The document ID (e.g., CMS-2025-0304-0009)
@@ -140,9 +139,14 @@ def process(document_id: str, batch_size: int, skip_processed: bool, trace: bool
         reggie process CMS-2025-0304-0009
         reggie process CMS-2025-0304-0009 --skip-processed
     """
+    config = get_config()
+
+    # Use config default if batch_size not specified
+    if batch_size is None:
+        batch_size = config.default_batch_size
+
     # Enable LangSmith tracing if requested
     if trace:
-        config = get_config()
         config.apply_langsmith(enable_tracing=True)
         console.print("[dim]LangSmith tracing enabled[/dim]")
 
