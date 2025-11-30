@@ -109,7 +109,9 @@ def create_vector_search_chain(
     sentiment_filter: str = None,
     category_filter: str = None,
     topics_filter: List[str] = None,
-    topic_filter_mode: str = "any"
+    topic_filter_mode: str = "any",
+    doctor_specialization_filter: str = None,
+    licensed_professional_type_filter: str = None
 ) -> Runnable:
     """Create reusable vector search chain using LCEL.
 
@@ -120,6 +122,8 @@ def create_vector_search_chain(
         category_filter: Optional category filter
         topics_filter: Optional topics filter
         topic_filter_mode: 'any' or 'all' for topic filtering
+        doctor_specialization_filter: Optional doctor specialization filter
+        licensed_professional_type_filter: Optional licensed professional type filter
 
     Returns:
         Runnable that takes query text and returns search results
@@ -140,7 +144,9 @@ def create_vector_search_chain(
                 sentiment_filter=sentiment_filter,
                 category_filter=category_filter,
                 topics_filter=topics_filter,
-                topic_filter_mode=topic_filter_mode
+                topic_filter_mode=topic_filter_mode,
+                doctor_specialization_filter=doctor_specialization_filter,
+                licensed_professional_type_filter=licensed_professional_type_filter
             )
 
         return results
@@ -159,7 +165,9 @@ def create_hybrid_search_chain(
     sentiment_filter: str = None,
     category_filter: str = None,
     topics_filter: List[str] = None,
-    topic_filter_mode: str = "any"
+    topic_filter_mode: str = "any",
+    doctor_specialization_filter: str = None,
+    licensed_professional_type_filter: str = None
 ) -> Runnable:
     """Create hybrid search chain combining vector and full-text search.
 
@@ -176,6 +184,8 @@ def create_hybrid_search_chain(
         category_filter: Optional category filter
         topics_filter: Optional topics filter
         topic_filter_mode: 'any' or 'all' for topic filtering
+        doctor_specialization_filter: Optional doctor specialization filter
+        licensed_professional_type_filter: Optional licensed professional type filter
 
     Returns:
         Runnable that accepts dict with 'semantic_query' and 'keyword_query'
@@ -216,6 +226,8 @@ def create_hybrid_search_chain(
                 category_filter=category_filter,
                 topics_filter=topics_filter,
                 topic_filter_mode=topic_filter_mode,
+                doctor_specialization_filter=doctor_specialization_filter,
+                licensed_professional_type_filter=licensed_professional_type_filter,
             )
 
         return results

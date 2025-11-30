@@ -102,6 +102,10 @@ def create_rag_graph() -> StateGraph:
             filters["category"] = query_gen.category_filter.value
         if query_gen.topics_filter:
             filters["topics"] = [t.value for t in query_gen.topics_filter]
+        if query_gen.doctor_specialization_filter:
+            filters["doctor_specialization"] = query_gen.doctor_specialization_filter.value
+        if query_gen.licensed_professional_type_filter:
+            filters["licensed_professional_type"] = query_gen.licensed_professional_type_filter.value
 
         return {
             "current_semantic_query": query_gen.semantic_query,
@@ -153,7 +157,9 @@ def create_rag_graph() -> StateGraph:
                 sentiment_filter=filters.get("sentiment"),
                 category_filter=filters.get("category"),
                 topics_filter=filters.get("topics"),
-                topic_filter_mode=state.get("topic_filter_mode", "any")
+                topic_filter_mode=state.get("topic_filter_mode", "any"),
+                doctor_specialization_filter=filters.get("doctor_specialization"),
+                licensed_professional_type_filter=filters.get("licensed_professional_type")
             )
             search_mode_label = "hybrid"
 
@@ -170,7 +176,9 @@ def create_rag_graph() -> StateGraph:
                 sentiment_filter=filters.get("sentiment"),
                 category_filter=filters.get("category"),
                 topics_filter=filters.get("topics"),
-                topic_filter_mode=state.get("topic_filter_mode", "any")
+                topic_filter_mode=state.get("topic_filter_mode", "any"),
+                doctor_specialization_filter=filters.get("doctor_specialization"),
+                licensed_professional_type_filter=filters.get("licensed_professional_type")
             )
             search_mode_label = "vector"
             # Vector-only uses semantic query
@@ -184,6 +192,10 @@ def create_rag_graph() -> StateGraph:
             filter_parts.append(f"category={filters['category']}")
         if filters.get("topics"):
             filter_parts.append(f"topics={filters['topics']}")
+        if filters.get("doctor_specialization"):
+            filter_parts.append(f"doctor_specialization={filters['doctor_specialization']}")
+        if filters.get("licensed_professional_type"):
+            filter_parts.append(f"licensed_professional_type={filters['licensed_professional_type']}")
 
         if filter_parts:
             emit_status(f"querying comment text ({search_mode_label}, filtered on {', '.join(filter_parts)})")

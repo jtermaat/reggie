@@ -127,6 +127,14 @@ class QueryGeneration(BaseModel):
         default="any",
         description="When using topics_filter: 'any' means has any topic, 'all' means has all topics"
     )
+    doctor_specialization_filter: Optional[DoctorSpecialization] = Field(
+        default=None,
+        description="Optional filter for specific doctor specialization (only applicable when category is 'physicians_surgeons')"
+    )
+    licensed_professional_type_filter: Optional[LicensedProfessionalType] = Field(
+        default=None,
+        description="Optional filter for specific licensed professional type (only applicable when category is 'licensed_clinicians')"
+    )
     reasoning: str = Field(
         description="Brief explanation of why these queries and filters were chosen"
     )

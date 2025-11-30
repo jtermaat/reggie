@@ -58,6 +58,10 @@ For PostgreSQL full-text search:
 - category_filter: commenter category
 - topics_filter: list of topic values
 - topic_filter_mode: 'any' (has any topic) or 'all' (has all topics)
+- doctor_specialization_filter: medical specialty (only when filtering for physicians)
+  Examples: 'cardiology', 'ophthalmology', 'family_medicine', 'orthopedic_surgery', 'dermatology', 'psychiatry', 'radiology', 'oncology', 'anesthesiology', 'emergency_medicine', 'pediatrics', 'internal_medicine', 'gastroenterology', 'nephrology', 'pulmonology', 'rheumatology', 'neurology', 'retina_specialist', etc.
+- licensed_professional_type_filter: professional type (only when filtering for licensed clinicians)
+  Examples: 'nurse_practitioner', 'physical_therapist', 'pharmacist', 'physician_assistant', 'optometrist', 'psychologist', 'registered_nurse', 'certified_nurse_anesthetist', 'occupational_therapist', 'speech_language_pathologist', 'respiratory_therapist', 'dietitian', 'social_worker', 'chiropractor', 'podiatrist', 'dentist', etc.
 
 Only apply filters when they clearly narrow to relevant content."""),
         ("user", """Question: {question}
