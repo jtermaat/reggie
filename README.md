@@ -2,7 +2,7 @@
 
 Reggie is an end-to-end tool for loading, processing, and analyzing comments on regulation documents on [Regulations.gov](https://www.regulations.gov/), with a particular focus on Healthcare regulations.
 
-Data is loaded from the public API and processed by tagging with a lightweight LLM and chunking/embedding for vector search.
+Data is imported from bulk downloads (or loaded via API) and processed by tagging with a lightweight LLM and chunking/embedding for vector search.
 
 This data is saved in a local PostgreSQL database with pgvector for semantic search, and exposed through visualizations and query tools an agent can use to make statistical queries or text-based RAG searches (with optional filtering on the tagged metadata).  
 
@@ -110,23 +110,29 @@ cp .env.example .env
 # DATABASE_URL=postgresql://reggie:reggie@localhost:5432/reggie
 ```
 
-### 3. Process a Document
+### 3. Import and Process Comments
 
 The database schema will be automatically initialized on first use.
 
+The **recommended approach** is to download comments in bulk from Regulations.gov and import them:
+
+1. Go to the document page on [Regulations.gov](https://www.regulations.gov/) and use the "Download" feature to export comments as a CSV file
+2. Import the CSV into Reggie:
+
 ```bash
-reggie stream CMS-2025-0304-0001
+reggie import ~/Downloads/comments-export.csv
 ```
 
-This is the **recommended approach** for ingesting and processing a document's comments. The `stream` command downloads all comments from Regulations.gov and processes them (including chunking, embedding, and AI-powered tagging) in a single efficient operation.
+3. Process the imported comments:
 
-**What it does:**
-- Downloads comments from the Regulations.gov API
-- Tags each comment by category (who is commenting), sentiment (for/against), and topics discussed
-- Creates embeddings for semantic search
-- Shows real-time cost tracking as processing occurs
+```bash
+reggie process CMS-2025-0304-0001
+```
 
-**Note**: This may take multiple hours depending on the number of comments, due to API rate limiting. For a quick test, choose a document with a low number of comments. For example, [CMS-2025-0304-0001](https://www.regulations.gov/document/CMS-2025-0304-0001) has only 10 comments.
+**What each command does:**
+
+- `reggie import`: Loads comments from the bulk download CSV into the database. This is fast since it bypasses API rate limits.
+- `reggie process`: Tags each comment with AI (category, sentiment, topics) and creates embeddings for semantic search. Shows a cost report when complete.
 
 The tagging categories and topics can be viewed in [comment.py](https://github.com/jtermaat/reggie/blob/main/reggie/models/comment.py).
 
@@ -163,28 +169,40 @@ The tagging categories and topics can be viewed in [comment.py](https://github.c
   - Total comments per category
   - Percentages based on total category comments (allowing users to deduce mixed/unclear sentiment)
 
-### 6. Alternative: Advanced Workflow
+### 6. Alternative Workflows
 
-For more control over the download and processing phases, you can use separate commands:
+If you don't have a bulk download CSV, you can use the API-based approaches below.
 
-**Download comments only:**
+**Stream (download + process in one step):**
 ```bash
-reggie load CMS-2025-0304-0001
+reggie stream CMS-2025-0304-0001
 ```
 
-This fetches all comments for the document and stores them in the database without processing.
+Downloads comments from the Regulations.gov API and processes them immediately. Shows real-time cost tracking. Rate-limited to ~1000 requests/hour, so large documents may take hours. Good for quick tests with small documents like [CMS-2025-0304-0001](https://www.regulations.gov/document/CMS-2025-0304-0001) (10 comments).
 
-**Process previously downloaded comments:**
+**Load + Process (separate steps):**
 ```bash
-reggie process CMS-2025-0304-0001
+reggie load CMS-2025-0304-0001   # Download only
+reggie process CMS-2025-0304-0001  # Process separately
 ```
 
-This processes the comments that were already downloaded with `reggie load`, performing the AI tagging and embedding. You can customize the batch size with `--batch-size` (default: 10) and skip already-processed comments with `--skip-processed`.
+Use this when you want to download first and process later, or when experimenting with different processing parameters. The `process` command supports `--batch-size` (default: 10) and `--skip-processed` to resume interrupted runs.
 
-**When to use this workflow:**
-- When you want to download first and process later
-- When experimenting with different processing parameters
-- When re-processing comments with different AI models
+### 7. Database Management
+
+**List documents:**
+```bash
+reggie list
+```
+
+Shows all documents in the database with their document ID, title, docket ID, comment count, and load date.
+
+**Clear a document:**
+```bash
+reggie clear CMS-2025-0304-0001
+```
+
+Removes a document and all associated data (comments, chunks, embeddings). Requires confirmation, or use `--force` to skip. Useful when re-importing a document with fresh data.
 
 
 ## Design Notes
