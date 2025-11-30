@@ -3,6 +3,7 @@
 import os
 from typing import Dict, Any, AsyncGenerator
 
+import httpx
 import pytest
 import pytest_asyncio
 import psycopg
@@ -110,16 +111,17 @@ def mock_regulations_api(httpx_mock):
                 }
             }
 
-            # Match the actual API query parameters
-            self.httpx_mock.add_response(
-                url=f"{self.base_url}/comments",
-                json=response_data,
-                match_params={
+            # Build URL with query parameters using httpx.URL
+            url = httpx.URL(
+                f"{self.base_url}/comments",
+                params={
                     "filter[commentOnId]": object_id,
                     "page[size]": "250",
-                    "page[number]": str(page_number)
+                    "page[number]": str(page_number),
+                    "sort": "lastModifiedDate,documentId"
                 }
             )
+            self.httpx_mock.add_response(url=url, json=response_data)
 
         def mock_comment_details(self, comment_id: str, comment_text: str = "Test comment"):
             """Mock comment details response."""
@@ -149,12 +151,13 @@ def mock_openai(mocker):
 
     Mocks both ChatOpenAI and OpenAIEmbeddings.
     """
-    from reggie.models import CommentClassification, Category, Sentiment
+    from reggie.models import CommentClassification, Category, Sentiment, Topic
 
     # Mock ChatOpenAI for categorization
     mock_classification = CommentClassification(
         category=Category.PHYSICIANS_SURGEONS,
         sentiment=Sentiment.FOR,
+        topics=[Topic.REIMBURSEMENT_PAYMENT],
         reasoning="Test classification"
     )
 

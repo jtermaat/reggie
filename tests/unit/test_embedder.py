@@ -13,7 +13,14 @@ class TestEmbedderInitialization:
 
     def test_embedder_requires_api_key(self, mocker):
         """Embedder raises error without OpenAI API key."""
-        mocker.patch.dict("os.environ", {"OPENAI_API_KEY": ""}, clear=False)
+        # Mock get_config to return a config without API key
+        mock_config = mocker.MagicMock()
+        mock_config.openai_api_key = ""
+        mock_config.embedding_model = "text-embedding-3-small"
+        mock_config.embedding_dimension = 1536
+        mock_config.chunk_size = 256
+        mock_config.chunk_overlap = 40
+        mocker.patch("reggie.pipeline.embedder.get_config", return_value=mock_config)
 
         with pytest.raises(ConfigurationException) as exc_info:
             CommentEmbedder()

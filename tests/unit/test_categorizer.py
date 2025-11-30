@@ -14,8 +14,10 @@ class TestCategorizerInitialization:
 
     def test_categorizer_requires_api_key(self, mocker):
         """Categorizer raises error without OpenAI API key."""
-        # Remove the test API key from environment
-        mocker.patch.dict("os.environ", {"OPENAI_API_KEY": ""}, clear=False)
+        # Mock get_config to return a config without API key
+        mock_config = mocker.MagicMock()
+        mock_config.openai_api_key = ""
+        mocker.patch("reggie.pipeline.categorizer.get_config", return_value=mock_config)
 
         with pytest.raises(ConfigurationException) as exc_info:
             CommentCategorizer()

@@ -1,5 +1,6 @@
 """End-to-end pipeline integration tests with mocked external APIs and real database"""
 
+import httpx
 import pytest
 
 from reggie.pipeline.loader import DocumentLoader
@@ -46,19 +47,20 @@ class TestDocumentLoadingPipeline:
         )
 
         # Mock comments list (single page)
+        url_comments = httpx.URL(f"{mock_regulations_api.base_url}/comments", params={
+            "filter[commentOnId]": object_id,
+            "page[size]": "250",
+            "page[number]": "1",
+            "sort": "lastModifiedDate,documentId"
+        })
         mock_regulations_api.httpx_mock.add_response(
-            url=f"{mock_regulations_api.base_url}/comments",
+            url=url_comments,
             json={
                 "data": [
                     {"id": "C1"},
                     {"id": "C2"}
                 ],
                 "meta": {"hasNextPage": False}
-            },
-            match_params={
-                "filter[commentOnId]": object_id,
-                "page[size]": "250",
-                "page[number]": "1"
             }
         )
 
@@ -164,16 +166,17 @@ class TestDocumentLoadingPipeline:
             }
         )
 
+        url_comments = httpx.URL(f"{mock_regulations_api.base_url}/comments", params={
+            "filter[commentOnId]": object_id,
+            "page[size]": "250",
+            "page[number]": "1",
+            "sort": "lastModifiedDate,documentId"
+        })
         mock_regulations_api.httpx_mock.add_response(
-            url=f"{mock_regulations_api.base_url}/comments",
+            url=url_comments,
             json={
                 "data": [{"id": "C1"}],
                 "meta": {"hasNextPage": False}
-            },
-            match_params={
-                "filter[commentOnId]": object_id,
-                "page[size]": "250",
-                "page[number]": "1"
             }
         )
 
@@ -319,7 +322,7 @@ class TestCommentProcessingPipeline:
 
         # Mock categorizer to fail
         mock_categorizer = mocker.patch(
-            "reggie.pipeline.processor.CommentCategorizer"
+            "reggie.pipeline.orchestrator.CommentCategorizer"
         )
         mock_categorizer_instance = mock_categorizer.return_value
         mock_categorizer_instance.categorize_batch = mocker.AsyncMock(
@@ -392,16 +395,17 @@ class TestFullEndToEndPipeline:
             }
         )
 
+        url_comments = httpx.URL(f"{mock_regulations_api.base_url}/comments", params={
+            "filter[commentOnId]": object_id,
+            "page[size]": "250",
+            "page[number]": "1",
+            "sort": "lastModifiedDate,documentId"
+        })
         mock_regulations_api.httpx_mock.add_response(
-            url=f"{mock_regulations_api.base_url}/comments",
+            url=url_comments,
             json={
                 "data": [{"id": "C1"}],
                 "meta": {"hasNextPage": False}
-            },
-            match_params={
-                "filter[commentOnId]": object_id,
-                "page[size]": "250",
-                "page[number]": "1"
             }
         )
 

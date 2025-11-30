@@ -1,5 +1,6 @@
 """Integration tests for Regulations.gov API client with mocked HTTP responses"""
 
+import httpx
 import pytest
 from datetime import datetime
 
@@ -165,32 +166,32 @@ class TestGetAllComments:
         base_url = "https://api.regulations.gov/v4/comments"
 
         # Page 1: has next page
+        url1 = httpx.URL(base_url, params={
+            "filter[commentOnId]": object_id,
+            "page[size]": "250",
+            "page[number]": "1",
+            "sort": "lastModifiedDate,documentId"
+        })
         httpx_mock.add_response(
-            url=base_url,
+            url=url1,
             json={
                 "data": [{"id": "C1"}],
                 "meta": {"hasNextPage": True, "totalElements": 2, "pageNumber": 1}
-            },
-            match_params={
-                "filter[commentOnId]": object_id,
-                "page[size]": "250",
-                "page[number]": "1",
-                "sort": "lastModifiedDate,documentId"
             }
         )
 
         # Page 2: no next page
+        url2 = httpx.URL(base_url, params={
+            "filter[commentOnId]": object_id,
+            "page[size]": "250",
+            "page[number]": "2",
+            "sort": "lastModifiedDate,documentId"
+        })
         httpx_mock.add_response(
-            url=base_url,
+            url=url2,
             json={
                 "data": [{"id": "C2"}],
                 "meta": {"hasNextPage": False, "totalElements": 2, "pageNumber": 2}
-            },
-            match_params={
-                "filter[commentOnId]": object_id,
-                "page[size]": "250",
-                "page[number]": "2",
-                "sort": "lastModifiedDate,documentId"
             }
         )
 
@@ -227,8 +228,14 @@ class TestGetAllComments:
         base_url = "https://api.regulations.gov/v4/comments"
 
         # Page 20: has next page, triggers windowing
+        url_page20 = httpx.URL(base_url, params={
+            "filter[commentOnId]": object_id,
+            "page[size]": "250",
+            "page[number]": "20",
+            "sort": "lastModifiedDate,documentId"
+        })
         httpx_mock.add_response(
-            url=base_url,
+            url=url_page20,
             json={
                 "data": [{
                     "id": "C20",
@@ -237,28 +244,22 @@ class TestGetAllComments:
                     }
                 }],
                 "meta": {"hasNextPage": True, "totalElements": 6000, "pageNumber": 20}
-            },
-            match_params={
-                "filter[commentOnId]": object_id,
-                "page[size]": "250",
-                "page[number]": "20",
-                "sort": "lastModifiedDate,documentId"
             }
         )
 
         # Page 1 of next window with date filter
+        url_window = httpx.URL(base_url, params={
+            "filter[commentOnId]": object_id,
+            "page[size]": "250",
+            "page[number]": "1",
+            "sort": "lastModifiedDate,documentId",
+            "filter[lastModifiedDate][ge]": "2024-01-15 10:30:00"
+        })
         httpx_mock.add_response(
-            url=base_url,
+            url=url_window,
             json={
                 "data": [{"id": "C21"}],
                 "meta": {"hasNextPage": False, "totalElements": 1, "pageNumber": 1}
-            },
-            match_params={
-                "filter[commentOnId]": object_id,
-                "page[size]": "250",
-                "page[number]": "1",
-                "sort": "lastModifiedDate,documentId",
-                "filter[lastModifiedDate][ge]": "2024-01-15 10:30:00"
             }
         )
 
@@ -372,19 +373,20 @@ class TestGetAllCommentDetails:
         base_url = "https://api.regulations.gov/v4"
 
         # Mock comments list
+        url_comments = httpx.URL(f"{base_url}/comments", params={
+            "filter[commentOnId]": object_id,
+            "page[size]": "250",
+            "page[number]": "1",
+            "sort": "lastModifiedDate,documentId"
+        })
         httpx_mock.add_response(
-            url=f"{base_url}/comments",
+            url=url_comments,
             json={
                 "data": [
                     {"id": "C1"},
                     {"id": "C2"}
                 ],
                 "meta": {"hasNextPage": False}
-            },
-            match_params={
-                "filter[commentOnId]": object_id,
-                "page[size]": "250",
-                "page[number]": "1"
             }
         )
 
@@ -416,19 +418,20 @@ class TestGetAllCommentDetails:
         base_url = "https://api.regulations.gov/v4"
 
         # Mock comments list
+        url_comments = httpx.URL(f"{base_url}/comments", params={
+            "filter[commentOnId]": object_id,
+            "page[size]": "250",
+            "page[number]": "1",
+            "sort": "lastModifiedDate,documentId"
+        })
         httpx_mock.add_response(
-            url=f"{base_url}/comments",
+            url=url_comments,
             json={
                 "data": [
                     {"id": "C1"},
                     {"id": "C2"}
                 ],
                 "meta": {"hasNextPage": False}
-            },
-            match_params={
-                "filter[commentOnId]": object_id,
-                "page[size]": "250",
-                "page[number]": "1"
             }
         )
 

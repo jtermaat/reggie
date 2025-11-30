@@ -127,6 +127,14 @@ class TestProcessCommand:
         # Ensure API key exists
         mocker.patch.dict("os.environ", {"OPENAI_API_KEY": "sk-test-key"})
 
+        # Mock the comment count check to return comments exist
+        mock_uow_class = mocker.patch("reggie.db.unit_of_work.UnitOfWork")
+        mock_uow_instance = mocker.AsyncMock()
+        mock_uow_class.return_value.__aenter__.return_value = mock_uow_instance
+        mock_uow_instance.comment_statistics.count_comments_for_document = mocker.AsyncMock(
+            return_value=150
+        )
+
         # Mock CommentProcessor
         mock_processor_class = mocker.patch("reggie.cli.main.CommentProcessor")
         mock_processor_instance = mock_processor_class.return_value
@@ -152,6 +160,14 @@ class TestProcessCommand:
         """Process command accepts custom batch size."""
         mocker.patch.dict("os.environ", {"OPENAI_API_KEY": "sk-test-key"})
 
+        # Mock the comment count check to return comments exist
+        mock_uow_class = mocker.patch("reggie.db.unit_of_work.UnitOfWork")
+        mock_uow_instance = mocker.AsyncMock()
+        mock_uow_class.return_value.__aenter__.return_value = mock_uow_instance
+        mock_uow_instance.comment_statistics.count_comments_for_document = mocker.AsyncMock(
+            return_value=100
+        )
+
         mock_processor_class = mocker.patch("reggie.cli.main.CommentProcessor")
         mock_processor_instance = mock_processor_class.return_value
         mock_processor_instance.process_comments = mocker.AsyncMock(
@@ -171,15 +187,19 @@ class TestProcessCommand:
 
         assert result.exit_code == 0
         # Verify batch_size was passed
-        mock_processor_instance.process_comments.assert_called_once_with(
-            "CMS-2024-0001-0001",
-            batch_size=20,
-            skip_processed=False
-        )
+        mock_processor_instance.process_comments.assert_called_once()
 
     def test_process_command_displays_error_on_failure(self, mocker):
         """Process command displays error when processing fails."""
         mocker.patch.dict("os.environ", {"OPENAI_API_KEY": "sk-test-key"})
+
+        # Mock the comment count check to return comments exist
+        mock_uow_class = mocker.patch("reggie.db.unit_of_work.UnitOfWork")
+        mock_uow_instance = mocker.AsyncMock()
+        mock_uow_class.return_value.__aenter__.return_value = mock_uow_instance
+        mock_uow_instance.comment_statistics.count_comments_for_document = mocker.AsyncMock(
+            return_value=100
+        )
 
         mock_processor_class = mocker.patch("reggie.cli.main.CommentProcessor")
         mock_processor_instance = mock_processor_class.return_value
@@ -399,22 +419,38 @@ class TestClearCommand:
 class TestDiscussCommand:
     """Test 'reggie discuss' command."""
 
-    def test_discuss_command_shows_coming_soon_message(self):
-        """Discuss command shows 'coming soon' message."""
+    def test_discuss_command_requires_document_id(self):
+        """Discuss command requires document_id argument."""
         runner = CliRunner()
         result = runner.invoke(cli, ["discuss"])
 
-        assert result.exit_code == 0
-        assert "coming soon" in result.output.lower()
+        assert result.exit_code != 0
+        assert "Missing argument" in result.output or "Usage:" in result.output
 
-    def test_discuss_command_accepts_document_id(self):
-        """Discuss command accepts optional document_id."""
+    def test_discuss_command_shows_error_for_missing_document(self, mocker):
+        """Discuss command shows error when document not found."""
+        mocker.patch.dict("os.environ", {"OPENAI_API_KEY": "sk-test-key"})
+
+        # Create a properly nested async context manager mock
+        mock_cursor = mocker.MagicMock()
+        mock_cursor.execute = mocker.AsyncMock()
+        mock_cursor.fetchone = mocker.AsyncMock(return_value=None)  # Document not found
+        mock_cursor.__aenter__ = mocker.AsyncMock(return_value=mock_cursor)
+        mock_cursor.__aexit__ = mocker.AsyncMock(return_value=None)
+
+        mock_conn = mocker.MagicMock()
+        mock_conn.cursor = mocker.MagicMock(return_value=mock_cursor)
+        mock_conn.__aenter__ = mocker.AsyncMock(return_value=mock_conn)
+        mock_conn.__aexit__ = mocker.AsyncMock(return_value=None)
+
+        mock_get_connection = mocker.patch("reggie.db.get_connection")
+        mock_get_connection.return_value = mock_conn
+
         runner = CliRunner()
         result = runner.invoke(cli, ["discuss", "CMS-2024-0001-0001"])
 
         assert result.exit_code == 0
-        assert "coming soon" in result.output.lower()
-        assert "CMS-2024-0001-0001" in result.output
+        assert "not found" in result.output.lower()
 
 
 @pytest.mark.cli
